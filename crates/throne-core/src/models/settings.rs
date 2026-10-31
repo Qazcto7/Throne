@@ -26,6 +26,7 @@ pub struct Settings {
     pub byedpi_preset: String,
     pub dns_predefined_enable: bool,
     pub dns_predefined_rules: Vec<String>,
+    pub dns_suffix_rules: Vec<String>,
 }
 
 impl Default for Settings {
@@ -65,6 +66,10 @@ impl Default for Settings {
                 "162.159.135.232 discord.gg".to_string(),
                 "128.116.44.3 roblox.com".to_string(),
                 "128.116.44.3 www.roblox.com".to_string(),
+            ],
+            dns_suffix_rules: vec![
+                "162.159.136.232: discord.com, discordapp.com, discord.gg, discordapp.net, discordcdn.com, discord.media".to_string(),
+                "128.116.44.3: roblox.com, rbxcdn.com, rbxinfra.com, robloxlabs.com".to_string(),
             ],
         }
     }

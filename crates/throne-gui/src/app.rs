@@ -66,6 +66,7 @@ pub struct ThroneApp {
 
     // Predefined rules multiline buffer for DNS settings editor
     dns_predefined_text: String,
+    dns_suffix_text: String,
 
     // Traffic Graph History
     up_speed_history: VecDeque<[f64; 2]>,
@@ -83,6 +84,7 @@ impl ThroneApp {
     ) -> Self {
         let default_settings = Settings::default();
         let dns_predefined_text = default_settings.dns_predefined_rules.join("\n");
+        let dns_suffix_text = default_settings.dns_suffix_rules.join("\n");
 
         Self {
             cmd_tx,
@@ -128,6 +130,7 @@ impl ThroneApp {
             show_new_profile_modal: false,
             new_profile_name: String::new(),
             dns_predefined_text,
+            dns_suffix_text,
             up_speed_history: VecDeque::new(),
             down_speed_history: VecDeque::new(),
             history_time_sec: 0.0,
@@ -186,6 +189,7 @@ impl ThroneApp {
                 GuiEvent::SettingsUpdated(st) => {
                     self.settings = *st;
                     self.dns_predefined_text = self.settings.dns_predefined_rules.join("\n");
+                    self.dns_suffix_text = self.settings.dns_suffix_rules.join("\n");
                 }
                 GuiEvent::LatencyUpdated(pid, lat) => {
                     if let Some(p) = self.profiles.iter_mut().find(|p| p.id == pid) {
@@ -961,10 +965,19 @@ impl ThroneApp {
                             });
 
                             ui.add_space(8.0);
-                            ui.label("Ön Tanımlı DNS Eşlemeleri (Her satıra bir 'IP AlanAdı' formatı):");
+                            ui.label("Ön Tanımlı Alan Adları (Hosts Eşlemeleri - 'IP AlanAdı'):");
                             ui.add(
                                 egui::TextEdit::multiline(&mut self.dns_predefined_text)
-                                    .desired_rows(6)
+                                    .desired_rows(5)
+                                    .desired_width(ui.available_width() - 10.0),
+                            );
+
+                            ui.add_space(8.0);
+                            ui.label("Ön Tanımlı Alan Adı Sonek Kuralları (Wildcard / Suffix DNS - 'IP: sonek1, sonek2, ...'):");
+                            ui.label("Discord ve Roblox gibi alt alan adı ailelerini zehirlenmiş DNS'e düşmeden doğrudan IP'ye çözümler.");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.dns_suffix_text)
+                                    .desired_rows(4)
                                     .desired_width(ui.available_width() - 10.0),
                             );
                         }
@@ -1082,6 +1095,13 @@ impl ThroneApp {
                         // Parse updated predefined rules text
                         self.settings.dns_predefined_rules = self
                             .dns_predefined_text
+                            .lines()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
+                        self.settings.dns_suffix_rules = self
+                            .dns_suffix_text
                             .lines()
                             .map(|s| s.trim().to_string())
                             .filter(|s| !s.is_empty())

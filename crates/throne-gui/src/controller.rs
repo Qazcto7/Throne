@@ -265,6 +265,11 @@ pub fn spawn_controller(
                             GuiCommand::SaveSettings(settings) => {
                                 let _ = engine.db.settings.save_settings(&settings);
                                 let _ = evt_tx.send(GuiEvent::LogAppended("[SETTINGS] Settings saved successfully".into()));
+                                if let Some(pid) = settings.active_profile_id
+                                    && engine.runner.is_running().await
+                                {
+                                    let _ = engine.connect(pid).await;
+                                }
                                 push_all_data(&engine, &evt_tx).await;
                             }
                             GuiCommand::RefreshData => {

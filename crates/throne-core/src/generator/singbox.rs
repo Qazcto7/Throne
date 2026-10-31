@@ -113,32 +113,27 @@ impl<'a> SingBoxGenerator<'a> {
                 }
             }
 
-            // Suffix rules for wildcard domain families so subdomains never hit poisoned DNS
-            rules.push(json!({
-                "domain_suffix": [
-                    "discord.com",
-                    "discordapp.com",
-                    "discord.gg",
-                    "discordapp.net",
-                    "discordcdn.com",
-                    "discord.media"
-                ],
-                "action": "predefined",
-                "rcode": "NOERROR",
-                "answer": ["*. IN A 162.159.136.232"]
-            }));
+            // Suffix rules for wildcard domain families from GUI settings
+            let default_suffixes = [
+                "162.159.136.232: discord.com, discordapp.com, discord.gg, discordapp.net, discordcdn.com, discord.media".to_string(),
+                "128.116.44.3: roblox.com, rbxcdn.com, rbxinfra.com, robloxlabs.com".to_string(),
+            ];
+            let suffix_source: &[String] = if !self.settings.dns_suffix_rules.is_empty() {
+                &self.settings.dns_suffix_rules
+            } else {
+                &default_suffixes
+            };
 
-            rules.push(json!({
-                "domain_suffix": [
-                    "roblox.com",
-                    "rbxcdn.com",
-                    "rbxinfra.com",
-                    "robloxlabs.com"
-                ],
-                "action": "predefined",
-                "rcode": "NOERROR",
-                "answer": ["*. IN A 128.116.44.3"]
-            }));
+            for line in suffix_source {
+                if let Some((ip, suffixes)) = Self::parse_dns_suffix_rule(line) {
+                    rules.push(json!({
+                        "domain_suffix": suffixes,
+                        "action": "predefined",
+                        "rcode": "NOERROR",
+                        "answer": [format!("*. IN A {}", ip)]
+                    }));
+                }
+            }
 
             if !predefined_map.is_empty() {
                 servers.push(json!({
@@ -166,6 +161,39 @@ impl<'a> SingBoxGenerator<'a> {
         }
 
         Ok(dns_obj)
+    }
+
+    pub fn parse_dns_suffix_rule(line: &str) -> Option<(String, Vec<String>)> {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return None;
+        }
+
+        let (ip_part, rest) = if let Some((ip, r)) = trimmed.split_once(':') {
+            (ip.trim(), r.trim())
+        } else {
+            let mut parts = trimmed.split_whitespace();
+            let ip = parts.next()?;
+            let r = trimmed[ip.len()..].trim();
+            (ip, r)
+        };
+
+        if ip_part.is_empty() || rest.is_empty() {
+            return None;
+        }
+
+        let suffixes: Vec<String> = rest
+            .split(|c: char| c == ',' || c.is_whitespace())
+            .map(|s| s.trim().trim_start_matches("*.").trim_start_matches('.'))
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .collect();
+
+        if suffixes.is_empty() {
+            None
+        } else {
+            Some((ip_part.to_string(), suffixes))
+        }
     }
 
     fn parse_dns_server(tag: &str, addr: &str, detour: Option<&str>) -> Value {

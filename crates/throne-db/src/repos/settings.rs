@@ -111,6 +111,12 @@ impl SettingsRepo {
         {
             s.dns_predefined_rules = rules;
         }
+        if let Some(v) = self.get_value("dns_suffix_rules")?
+            && let Ok(suffixes) = serde_json::from_str::<Vec<String>>(&v)
+            && !suffixes.is_empty()
+        {
+            s.dns_suffix_rules = suffixes;
+        }
 
         Ok(s)
     }
@@ -146,6 +152,9 @@ impl SettingsRepo {
         self.set_value("dns_predefined_enable", if s.dns_predefined_enable { "1" } else { "0" })?;
         if let Ok(rules_json) = serde_json::to_string(&s.dns_predefined_rules) {
             self.set_value("dns_predefined_rules", &rules_json)?;
+        }
+        if let Ok(suffixes_json) = serde_json::to_string(&s.dns_suffix_rules) {
+            self.set_value("dns_suffix_rules", &suffixes_json)?;
         }
         Ok(())
     }
