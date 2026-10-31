@@ -224,7 +224,7 @@ impl<'a> SingBoxGenerator<'a> {
                 "auto_route": true,
                 "strict_route": false,
                 "stack": self.settings.tun_stack,
-                "dns_mode": "hijack",
+                "dns_mode": "disabled",
                 "route_exclude_address": ["127.0.0.0/8"]
             });
             inbounds.push(tun_obj);

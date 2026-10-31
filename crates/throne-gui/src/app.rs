@@ -77,7 +77,7 @@ impl ThroneApp {
                 byedpi_running: false,
                 active_profile_id: None,
                 tun_enabled: false,
-                system_proxy: true,
+                system_proxy: false,
                 inbound_port: 2080,
                 inbound_address: "127.0.0.1".into(),
             },

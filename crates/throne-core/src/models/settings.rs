@@ -37,7 +37,7 @@ impl Default for Settings {
             tun_interface_name: "throne-tun".to_string(),
             tun_stack: "system".to_string(),
             tun_strict_route: true,
-            system_proxy: true,
+            system_proxy: false,
             remote_api_enable: true,
             remote_api_port: 9095,
             remote_api_secret: String::new(),
