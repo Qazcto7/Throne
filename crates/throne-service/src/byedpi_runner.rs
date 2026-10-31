@@ -226,6 +226,14 @@ impl ByeDpiRunner {
             }
             let _ = std::fs::remove_file(&self.pid_file);
         }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("pkill")
+                .arg("-f")
+                .arg("ciadpi")
+                .status();
+        }
     }
 
     pub async fn is_running(&self) -> bool {

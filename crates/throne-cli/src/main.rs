@@ -156,6 +156,12 @@ fn get_db_path(custom: Option<PathBuf>) -> PathBuf {
     if local_cfg.exists() {
         return local_cfg;
     }
+    if let Some(home) = dirs::home_dir() {
+        let byedpi_db = home.join("byedpi_throne_linux/Throne/config/throne.db");
+        if byedpi_db.exists() {
+            return byedpi_db;
+        }
+    }
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("throne");

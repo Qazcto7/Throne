@@ -54,18 +54,63 @@ impl<'a> SingBoxGenerator<'a> {
 
     fn build_dns(&self) -> Result<Value> {
         let mut servers = Vec::new();
+        let mut rules = Vec::new();
+
+        // 1. Predefined hosts for DPI/DNS bypass (e.g. Discord, Roblox)
+        if self.settings.dns_predefined_enable && !self.settings.dns_predefined_rules.is_empty() {
+            let mut predefined_map: std::collections::BTreeMap<String, Vec<String>> =
+                std::collections::BTreeMap::new();
+            let mut domain_list = Vec::new();
+
+            for rule in &self.settings.dns_predefined_rules {
+                let trimmed = rule.trim();
+                if trimmed.is_empty() || trimmed.starts_with('#') {
+                    continue;
+                }
+                let mut parts = trimmed.split_whitespace();
+                if let (Some(ip), Some(domain)) = (parts.next(), parts.next()) {
+                    if domain == "localhost" {
+                        continue;
+                    }
+                    predefined_map
+                        .entry(domain.to_string())
+                        .or_default()
+                        .push(ip.to_string());
+                    domain_list.push(domain.to_string());
+                }
+            }
+
+            if !predefined_map.is_empty() {
+                servers.push(json!({
+                    "tag": "dns-hosts",
+                    "type": "hosts",
+                    "predefined": predefined_map
+                }));
+
+                rules.push(json!({
+                    "domain": domain_list,
+                    "server": "dns-hosts"
+                }));
+            }
+        }
 
         // Remote DNS
-        servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, Some("proxy")));
+        servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, None));
 
         // Direct DNS
         servers.push(Self::parse_dns_server("dns-direct", &self.settings.direct_dns, None));
 
-        Ok(json!({
+        let mut dns_obj = json!({
             "servers": servers,
             "final": "dns-remote",
-            "strategy": "prefer_ipv4"
-        }))
+            "strategy": "ipv4_only"
+        });
+
+        if !rules.is_empty() {
+            dns_obj["rules"] = Value::Array(rules);
+        }
+
+        Ok(dns_obj)
     }
 
     fn parse_dns_server(tag: &str, addr: &str, detour: Option<&str>) -> Value {
@@ -141,7 +186,9 @@ impl<'a> SingBoxGenerator<'a> {
                 "address": ["172.19.0.1/30"],
                 "auto_route": true,
                 "strict_route": self.settings.tun_strict_route,
-                "stack": self.settings.tun_stack
+                "stack": self.settings.tun_stack,
+                "dns_mode": "disabled",
+                "route_exclude_address": ["127.0.0.0/8"]
             }));
         }
 
@@ -386,7 +433,13 @@ impl<'a> SingBoxGenerator<'a> {
             "action": "hijack-dns"
         }));
 
-        // 3. Private IP ranges bypass
+        // 3. Resolve domains to IPv4 before sending to outbound proxy
+        rules.push(json!({
+            "action": "resolve",
+            "strategy": "ipv4_only"
+        }));
+
+        // 4. Private IP ranges bypass
         rules.push(json!({
             "ip_is_private": true,
             "outbound": "direct"

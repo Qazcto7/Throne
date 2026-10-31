@@ -24,6 +24,8 @@ pub struct Settings {
     pub byedpi_path: String,
     pub byedpi_args: String,
     pub byedpi_preset: String,
+    pub dns_predefined_enable: bool,
+    pub dns_predefined_rules: Vec<String>,
 }
 
 impl Default for Settings {
@@ -44,13 +46,23 @@ impl Default for Settings {
             active_route_id: None,
             mux_enabled: false,
             fake_dns: false,
-            remote_dns: "tcp://8.8.8.8".to_string(),
+            remote_dns: "https://1.1.1.1/dns-query".to_string(),
             direct_dns: "local".to_string(),
             log_level: "info".to_string(),
-            byedpi_enable: false,
+            byedpi_enable: true,
             byedpi_path: "ciadpi".to_string(),
-            byedpi_args: "-r 1+s".to_string(),
-            byedpi_preset: "standard".to_string(),
+            byedpi_args: "-s1 -At -d2 -f-1 -r1+s -An".to_string(),
+            byedpi_preset: "vodafone".to_string(),
+            dns_predefined_enable: true,
+            dns_predefined_rules: vec![
+                "127.0.0.1 localhost".to_string(),
+                "162.159.136.232 discord.com".to_string(),
+                "162.159.134.234 gateway.discord.gg".to_string(),
+                "162.159.134.233 cdn.discordapp.com".to_string(),
+                "162.159.129.233 discordapp.com".to_string(),
+                "128.116.44.3 roblox.com".to_string(),
+                "128.116.44.3 www.roblox.com".to_string(),
+            ],
         }
     }
 }
