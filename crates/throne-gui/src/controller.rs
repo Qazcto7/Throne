@@ -127,6 +127,15 @@ pub fn spawn_controller(
                                     let _ = evt_tx.send(GuiEvent::SettingsUpdated(Box::new(settings)));
                                 }
                             }
+                            GuiCommand::SetRouteProfile(rid) => {
+                                if let Ok(mut settings) = engine.db.settings.load_settings() {
+                                    settings.active_route_id = Some(rid);
+                                    let _ = engine.db.settings.save_settings(&settings);
+                                    let _ = evt_tx.send(GuiEvent::LogAppended(format!("[ROUTING] Route profile changed to ID {}", rid)));
+                                    let _ = evt_tx.send(GuiEvent::SettingsUpdated(Box::new(settings)));
+                                }
+                                push_all_data(&engine, &evt_tx).await;
+                            }
                             GuiCommand::TestProfile(pid) => {
                                 let _ = evt_tx.send(GuiEvent::LogAppended(format!("[TEST] Measuring latency for profile ID {}...", pid)));
                                 let latency = engine.test_profile(pid).await.ok().flatten();
@@ -204,6 +213,9 @@ async fn push_all_data(engine: &Arc<ThroneEngine>, evt_tx: &Sender<GuiEvent>) {
     }
     if let Ok(groups) = engine.db.groups.list_all() {
         let _ = evt_tx.send(GuiEvent::GroupsUpdated(groups));
+    }
+    if let Ok(routes) = engine.db.routes.list_profiles() {
+        let _ = evt_tx.send(GuiEvent::RoutesUpdated(routes));
     }
     if let Ok(settings) = engine.db.settings.load_settings() {
         let _ = evt_tx.send(GuiEvent::SettingsUpdated(Box::new(settings)));

@@ -206,6 +206,14 @@ impl<'a> SingBoxGenerator<'a> {
             "listen_port": self.settings.inbound_port
         }));
 
+        // DNS direct inbound (matching classic Throne core_dns_in_port 55331)
+        inbounds.push(json!({
+            "type": "direct",
+            "tag": "dns-in",
+            "listen": "127.0.0.1",
+            "listen_port": 55331
+        }));
+
         // TUN inbound if enabled
         if self.settings.enable_tun {
             let tun_obj = json!({
@@ -566,7 +574,7 @@ impl<'a> SingBoxGenerator<'a> {
             "rules": rules,
             "final": final_outbound,
             "auto_detect_interface": true,
-            "default_domain_resolver": "dns-direct",
+            "default_domain_resolver": "dns-remote",
             "find_process": true
         }))
     }

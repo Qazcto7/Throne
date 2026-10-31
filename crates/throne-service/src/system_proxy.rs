@@ -49,6 +49,22 @@ impl SystemProxyManager {
                     .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "socksProxy", &socks_url])
                     .status();
             }
+
+            // Notify KDE Plasma KIO scheduler
+            let _ = Command::new("dbus-send")
+                .args(["--type=signal", "/KIO/Scheduler", "org.kde.KIO.Scheduler.reparseSlaveConfiguration", "string:"])
+                .status();
+
+            // Systemd user environment (ensures all Electron apps like Discord and terminal tools inherit proxy)
+            let http_env = format!("http_proxy={}", http_url);
+            let https_env = format!("https_proxy={}", http_url);
+            let all_env = format!("all_proxy=socks5://{}:{}", host, port);
+            let http_upper = format!("HTTP_PROXY={}", http_url);
+            let https_upper = format!("HTTPS_PROXY={}", http_url);
+            let all_upper = format!("ALL_PROXY=socks5://{}:{}", host, port);
+            let _ = Command::new("systemctl")
+                .args(["--user", "set-environment", &http_env, &https_env, &all_env, &http_upper, &https_upper, &all_upper])
+                .status();
         }
 
         Ok(())
@@ -68,6 +84,16 @@ impl SystemProxyManager {
                     .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "ProxyType", "0"])
                     .status();
             }
+
+            // Notify KDE Plasma KIO scheduler
+            let _ = Command::new("dbus-send")
+                .args(["--type=signal", "/KIO/Scheduler", "org.kde.KIO.Scheduler.reparseSlaveConfiguration", "string:"])
+                .status();
+
+            // Clear systemd user environment
+            let _ = Command::new("systemctl")
+                .args(["--user", "unset-environment", "http_proxy", "https_proxy", "all_proxy", "HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY"])
+                .status();
         }
 
         Ok(())

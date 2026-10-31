@@ -115,7 +115,7 @@ impl ThroneEngine {
         settings.active_profile_id = Some(profile_id);
         self.db.settings.save_settings(&settings)?;
 
-        if settings.system_proxy {
+        if settings.system_proxy || settings.enable_tun {
             let _ = SystemProxyManager::enable(&settings.inbound_address, settings.inbound_port);
         }
 
@@ -184,6 +184,10 @@ impl ThroneEngine {
         let mut settings = self.db.settings.load_settings()?;
         settings.enable_tun = enable;
         self.db.settings.save_settings(&settings)?;
+
+        if enable && self.runner.is_running().await {
+            let _ = SystemProxyManager::enable(&settings.inbound_address, settings.inbound_port);
+        }
 
         if let Some(active_id) = settings.active_profile_id {
             self.connect(active_id).await?;

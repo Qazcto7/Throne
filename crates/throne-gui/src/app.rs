@@ -1,11 +1,11 @@
 use crate::state::{GuiCommand, GuiEvent, StatusState};
-use egui::{vec2, Align, Button, Color32, Layout, RichText, ScrollArea, Ui};
+use egui::{pos2, vec2, Align, Button, Color32, Layout, Rect, RichText, ScrollArea, Stroke, Ui};
 use egui_extras::{Column, TableBuilder};
 use egui_plot::{Legend, Line, Plot, PlotPoints};
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
-use throne_core::{Group, OutboundConfig, Profile, Settings};
+use throne_core::{Group, OutboundConfig, Profile, RouteProfile, Settings};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -13,7 +13,17 @@ enum BottomTab {
     Logs,
     Connections,
     TrafficGraph,
-    RuntimeStats,
+}
+
+#[derive(PartialEq, Clone, Copy, Debug)]
+enum SettingsTab {
+    Common,
+    Core,
+    Dns,
+    Tun,
+    Routing,
+    ByeDpi,
+    SystemProxy,
 }
 
 pub struct ThroneApp {
@@ -25,17 +35,22 @@ pub struct ThroneApp {
     settings: Settings,
     profiles: Vec<Profile>,
     groups: Vec<Group>,
+    routes: Vec<RouteProfile>,
     active_group_id: i64,
     selected_profile_id: Option<i64>,
 
     // UI State
     active_bottom_tab: BottomTab,
+    active_settings_tab: SettingsTab,
     log_lines: Vec<String>,
     auto_scroll_logs: bool,
     show_settings_dialog: bool,
     show_import_dialog: bool,
     import_input_text: String,
     search_query: String,
+
+    // Predefined rules multiline buffer for DNS settings editor
+    dns_predefined_text: String,
 
     // Traffic Graph History
     up_speed_history: VecDeque<[f64; 2]>,
@@ -51,6 +66,9 @@ impl ThroneApp {
         evt_rx: Receiver<GuiEvent>,
         _cc: &eframe::CreationContext<'_>,
     ) -> Self {
+        let default_settings = Settings::default();
+        let dns_predefined_text = default_settings.dns_predefined_rules.join("\n");
+
         Self {
             cmd_tx,
             evt_rx,
@@ -59,26 +77,29 @@ impl ThroneApp {
                 byedpi_running: false,
                 active_profile_id: None,
                 tun_enabled: false,
-                system_proxy: false,
+                system_proxy: true,
                 inbound_port: 2080,
                 inbound_address: "127.0.0.1".into(),
             },
-            settings: Settings::default(),
+            settings: default_settings,
             profiles: Vec::new(),
             groups: vec![Group {
                 id: 1,
                 name: "Default".into(),
                 ..Default::default()
             }],
+            routes: Vec::new(),
             active_group_id: 1,
             selected_profile_id: None,
             active_bottom_tab: BottomTab::Logs,
+            active_settings_tab: SettingsTab::Common,
             log_lines: Vec::new(),
             auto_scroll_logs: true,
             show_settings_dialog: false,
             show_import_dialog: false,
             import_input_text: String::new(),
             search_query: String::new(),
+            dns_predefined_text,
             up_speed_history: VecDeque::new(),
             down_speed_history: VecDeque::new(),
             history_time_sec: 0.0,
@@ -113,8 +134,12 @@ impl ThroneApp {
                         self.groups = grps;
                     }
                 }
+                GuiEvent::RoutesUpdated(rts) => {
+                    self.routes = rts;
+                }
                 GuiEvent::SettingsUpdated(st) => {
                     self.settings = *st;
+                    self.dns_predefined_text = self.settings.dns_predefined_rules.join("\n");
                 }
                 GuiEvent::LatencyUpdated(pid, lat) => {
                     if let Some(p) = self.profiles.iter_mut().find(|p| p.id == pid) {
@@ -167,16 +192,79 @@ impl ThroneApp {
         }
     }
 
+    fn render_start_stop_button(ui: &mut Ui, is_running: bool) -> egui::Response {
+        let (rect, response) = ui.allocate_exact_size(vec2(38.0, 38.0), egui::Sense::click());
+
+        if ui.is_rect_visible(rect) {
+            let painter = ui.painter();
+            let center = rect.center();
+            let radius = 17.0;
+
+            // Outer ring color & glow
+            let ring_color = if is_running {
+                Color32::from_rgb(248, 81, 73) // Glowing Red
+            } else {
+                Color32::from_rgb(46, 160, 67) // Emerald Green
+            };
+
+            let bg_color = if response.hovered() {
+                if is_running {
+                    Color32::from_rgb(60, 20, 20)
+                } else {
+                    Color32::from_rgb(20, 48, 28)
+                }
+            } else {
+                if is_running {
+                    Color32::from_rgb(38, 16, 16)
+                } else {
+                    Color32::from_rgb(14, 32, 20)
+                }
+            };
+
+            // Outer ring
+            painter.circle(center, radius, bg_color, Stroke::new(2.5_f32, ring_color));
+
+            // Inner icon
+            if is_running {
+                // Square stop icon
+                let half_sz = 5.5;
+                let square_rect = Rect::from_min_max(
+                    pos2(center.x - half_sz, center.y - half_sz),
+                    pos2(center.x + half_sz, center.y + half_sz),
+                );
+                painter.rect_filled(square_rect, 1.5, ring_color);
+            } else {
+                // Triangle play icon pointing right
+                let p1 = pos2(center.x - 4.5, center.y - 6.5);
+                let p2 = pos2(center.x - 4.5, center.y + 6.5);
+                let p3 = pos2(center.x + 6.0, center.y);
+                painter.add(egui::Shape::convex_polygon(
+                    vec![p1, p2, p3],
+                    ring_color,
+                    Stroke::NONE,
+                ));
+            }
+        }
+
+        response
+    }
+
     fn render_top_bar(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(6.0, 0.0);
 
-            // Menu Buttons (Matching screenshot)
+            // 1. Program Menu
             ui.menu_button("Program ▾", |ui| {
-                if ui.button("📥 İçe Aktar (Import Link)...").clicked() {
+                if ui.button("📥 İçe Aktar (Import Links)...").clicked() {
                     self.show_import_dialog = true;
                     ui.close_menu();
                 }
+                if ui.button("📋 Panodan İçe Aktar").clicked() {
+                    // Try reading clipboard
+                    self.show_import_dialog = true;
+                    ui.close_menu();
+                }
+                ui.separator();
                 if ui.button("🔄 Verileri Yenile (Refresh)").clicked() {
                     let _ = self.cmd_tx.send(GuiCommand::RefreshData);
                     ui.close_menu();
@@ -188,16 +276,43 @@ impl ThroneApp {
                 }
             });
 
-            if ui.button("Settings ⚙").clicked() {
-                self.show_settings_dialog = true;
-            }
+            // 2. Settings Menu
+            ui.menu_button("Settings ▾", |ui| {
+                if ui.button("⚙ Tercihler (Preferences)...").clicked() {
+                    self.show_settings_dialog = true;
+                    ui.close_menu();
+                }
+                if ui.button("🛡 TUN / VPN Ayarları...").clicked() {
+                    self.active_settings_tab = SettingsTab::Tun;
+                    self.show_settings_dialog = true;
+                    ui.close_menu();
+                }
+                if ui.button("🌐 DNS Ayarları...").clicked() {
+                    self.active_settings_tab = SettingsTab::Dns;
+                    self.show_settings_dialog = true;
+                    ui.close_menu();
+                }
+                if ui.button("⚡ ByeDPI / DPI Atlama Ayarları...").clicked() {
+                    self.active_settings_tab = SettingsTab::ByeDpi;
+                    self.show_settings_dialog = true;
+                    ui.close_menu();
+                }
+                ui.separator();
+                if ui.button("📁 Yapılandırma Klasörünü Aç").clicked() {
+                    let _ = std::process::Command::new("xdg-open")
+                        .arg("/home/kazim/byedpi_throne_linux/Throne/config")
+                        .status();
+                    ui.close_menu();
+                }
+            });
 
-            ui.menu_button("Groups 📋", |ui| {
+            // 3. Groups Menu
+            ui.menu_button("Groups ▾", |ui| {
                 for g in &self.groups {
                     let text = if g.id == self.active_group_id {
-                        format!("• {}", g.name)
+                        format!("✓ {}", g.name)
                     } else {
-                        g.name.clone()
+                        format!("   {}", g.name)
                     };
                     if ui.button(text).clicked() {
                         self.active_group_id = g.id;
@@ -206,31 +321,46 @@ impl ThroneApp {
                 }
             });
 
-            ui.menu_button("Tools 🛠", |ui| {
-                if ui.button("⏱ Hepsini Test Et (Test All)").clicked() {
+            // 4. Routing Menu (Classic Throne 1.2.0)
+            ui.menu_button("Routing ▾", |ui| {
+                let current_route_id = self.settings.active_route_id.unwrap_or(1);
+                for r in &self.routes {
+                    let text = if r.id == current_route_id {
+                        format!("✓ {}", r.name)
+                    } else {
+                        format!("   {}", r.name)
+                    };
+                    if ui.button(text).clicked() {
+                        let _ = self.cmd_tx.send(GuiCommand::SetRouteProfile(r.id));
+                        ui.close_menu();
+                    }
+                }
+                if self.routes.is_empty() {
+                    ui.label("• Default");
+                    ui.label("• Roblox ve Discord");
+                }
+            });
+
+            // 5. Tools Menu
+            ui.menu_button("Tools ▾", |ui| {
+                if ui.button("⏱ Tüm Düğümleri Test Et (Test All)").clicked() {
                     for p in &self.profiles {
                         let _ = self.cmd_tx.send(GuiCommand::TestProfile(p.id));
                     }
                     ui.close_menu();
                 }
-                if ui.button("🔄 Abonelikleri Yenile").clicked() {
+                if ui.button("🔄 Abonelikleri Güncelle").clicked() {
                     let _ = self.cmd_tx.send(GuiCommand::UpdateSubscription(self.active_group_id));
                     ui.close_menu();
                 }
             });
 
-            ui.separator();
+            ui.add_space(4.0);
 
-            // Big Action Button (Play / Stop)
+            // Circular Start / Stop Button (Exact match to old Throne 1.2.0 GUI)
             let is_running = self.status.running;
-            let btn_text = if is_running {
-                RichText::new("⏹ Durdur").color(Color32::from_rgb(248, 81, 73)).strong()
-            } else {
-                RichText::new("▶ Başlat").color(Color32::from_rgb(46, 160, 67)).strong()
-            };
-
-            let btn = Button::new(btn_text).min_size(vec2(85.0, 26.0));
-            if ui.add(btn).clicked() {
+            let start_btn_resp = Self::render_start_stop_button(ui, is_running);
+            if start_btn_resp.clicked() {
                 if is_running {
                     let _ = self.cmd_tx.send(GuiCommand::Disconnect);
                 } else if let Some(pid) = self.selected_profile_id {
@@ -240,24 +370,27 @@ impl ThroneApp {
                 }
             }
 
-            ui.separator();
+            ui.add_space(6.0);
 
-            // Quick Checkboxes
-            let mut tun_val = self.status.tun_enabled;
-            if ui.checkbox(&mut tun_val, "Tun Mode").changed() {
-                let _ = self.cmd_tx.send(GuiCommand::ToggleTun(tun_val));
-            }
+            // Modes Checkboxes (Stacked side-by-side or vertical layout)
+            ui.vertical(|ui| {
+                let mut tun_val = self.status.tun_enabled;
+                if ui.checkbox(&mut tun_val, "Tun Mode").changed() {
+                    let _ = self.cmd_tx.send(GuiCommand::ToggleTun(tun_val));
+                }
 
-            let mut sysproxy_val = self.status.system_proxy;
-            if ui.checkbox(&mut sysproxy_val, "System Proxy").changed() {
-                let _ = self.cmd_tx.send(GuiCommand::ToggleSystemProxy(sysproxy_val));
-            }
+                let mut sysproxy_val = self.status.system_proxy;
+                if ui.checkbox(&mut sysproxy_val, "System Proxy").changed() {
+                    let _ = self.cmd_tx.send(GuiCommand::ToggleSystemProxy(sysproxy_val));
+                }
+            });
 
+            // Far Right: Search filter
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)
                         .hint_text("🔍 Filtrele...")
-                        .desired_width(120.0),
+                        .desired_width(130.0),
                 );
             });
         });
@@ -266,35 +399,43 @@ impl ThroneApp {
     fn render_group_tabs(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+
             for g in &self.groups {
                 let is_active = g.id == self.active_group_id;
-                let text = RichText::new(&g.name).color(if is_active {
-                    Color32::WHITE
-                } else {
-                    Color32::from_rgb(139, 148, 158)
-                });
+                let text = RichText::new(&g.name).color(Color32::WHITE).strong();
 
                 let fill = if is_active {
-                    Color32::from_rgb(43, 114, 214)
+                    Color32::from_rgb(43, 114, 214) // Blue pill
                 } else {
-                    Color32::from_rgb(25, 32, 44)
+                    Color32::from_rgb(32, 36, 44)
                 };
 
                 let btn = Button::new(text)
                     .fill(fill)
                     .corner_radius(egui::CornerRadius::same(4))
-                    .min_size(vec2(60.0, 22.0));
+                    .min_size(vec2(65.0, 24.0));
 
                 if ui.add(btn).clicked() {
                     self.active_group_id = g.id;
                 }
             }
+
+            // Funnel / Filter Icon aligned to right (Matching old Throne screenshot)
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                let filter_btn = Button::new(RichText::new(" 🔻 ").color(Color32::from_rgb(88, 166, 255)))
+                    .fill(Color32::from_rgb(30, 42, 60))
+                    .corner_radius(egui::CornerRadius::same(4))
+                    .min_size(vec2(28.0, 22.0));
+                if ui.add(filter_btn).clicked() {
+                    self.search_query.clear();
+                }
+            });
         });
     }
 
     fn render_profiles_table(&mut self, ui: &mut Ui) {
         let text_height = egui::TextStyle::Body.resolve(ui.style()).size;
-        let row_height = text_height + 10.0;
+        let row_height = text_height + 11.0;
 
         let filtered: Vec<&Profile> = self
             .profiles
@@ -314,17 +455,17 @@ impl ThroneApp {
             .collect();
 
         TableBuilder::new(ui)
-            .striped(true)
+            .striped(false)
             .resizable(true)
             .cell_layout(Layout::left_to_right(Align::Center))
-            .column(Column::exact(35.0))              // #
-            .column(Column::initial(70.0).at_least(60.0))   // Type
-            .column(Column::initial(160.0).at_least(100.0)) // Address
+            .column(Column::exact(36.0))              // ✓ or #
+            .column(Column::initial(80.0).at_least(60.0))   // Type
+            .column(Column::initial(180.0).at_least(110.0)) // Address
             .column(Column::remainder().at_least(180.0))    // Name
             .column(Column::initial(90.0).at_least(70.0))   // Test Result
             .column(Column::initial(180.0).at_least(140.0)) // Traffic
             .header(24.0, |mut header| {
-                header.col(|ui| { ui.strong("#"); });
+                header.col(|ui| { ui.strong("✓"); });
                 header.col(|ui| { ui.strong("Type"); });
                 header.col(|ui| { ui.strong("Address"); });
                 header.col(|ui| { ui.strong("Name"); });
@@ -345,7 +486,7 @@ impl ThroneApp {
                     };
 
                     let traffic_str = format!(
-                        "{} ↑  {} ↓",
+                        "{} ↑ {} ↓",
                         Self::format_bytes(p.traffic_up),
                         Self::format_bytes(p.traffic_dl)
                     );
@@ -356,15 +497,21 @@ impl ThroneApp {
                         String::new()
                     };
 
+                    // In old Throne: selected row has solid purple background (#7c4dff)
+                    let purple_bg = Color32::from_rgb(124, 77, 255);
+
                     body.row(row_height, |mut row| {
-                        // 1. # Index
+                        // 1. Checkmark ✓ or Index
                         row.col(|ui| {
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
                             let label = if is_active_profile {
-                                RichText::new(format!("🟢 {}", idx + 1)).color(Color32::from_rgb(63, 185, 80)).strong()
+                                RichText::new("✓").color(Color32::WHITE).strong()
                             } else {
-                                RichText::new(format!("{}", idx + 1))
+                                RichText::new(format!("{}", idx + 1)).color(if is_selected { Color32::WHITE } else { Color32::from_rgb(160, 168, 178) })
                             };
-                            let resp = ui.selectable_label(is_selected, label);
+                            let resp = ui.selectable_label(false, label);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -376,10 +523,11 @@ impl ThroneApp {
 
                         // 2. Type
                         row.col(|ui| {
-                            let resp = ui.selectable_label(
-                                is_selected,
-                                RichText::new(&p.profile_type).color(Color32::from_rgb(88, 166, 255)),
-                            );
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
+                            let text = RichText::new(&p.profile_type).color(Color32::WHITE);
+                            let resp = ui.selectable_label(false, text);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -387,7 +535,11 @@ impl ThroneApp {
 
                         // 3. Address
                         row.col(|ui| {
-                            let resp = ui.selectable_label(is_selected, &addr);
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
+                            let text = RichText::new(&addr).color(Color32::WHITE);
+                            let resp = ui.selectable_label(false, text);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -395,12 +547,11 @@ impl ThroneApp {
 
                         // 4. Name
                         row.col(|ui| {
-                            let text = if is_active_profile {
-                                RichText::new(&p.name).color(Color32::from_rgb(63, 185, 80)).strong()
-                            } else {
-                                RichText::new(&p.name).color(Color32::WHITE)
-                            };
-                            let resp = ui.selectable_label(is_selected, text);
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
+                            let text = RichText::new(&p.name).color(Color32::WHITE);
+                            let resp = ui.selectable_label(false, text);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -409,11 +560,11 @@ impl ThroneApp {
                                 let _ = self.cmd_tx.send(GuiCommand::Connect(p.id));
                             }
                             resp.context_menu(|ui| {
-                                if ui.button("⚡ Bağlan").clicked() {
+                                if ui.button("⚡ Bağlan (Connect)").clicked() {
                                     let _ = self.cmd_tx.send(GuiCommand::Connect(p.id));
                                     ui.close_menu();
                                 }
-                                if ui.button("⏱ Test Et").clicked() {
+                                if ui.button("⏱ Test Et (Latency Test)").clicked() {
                                     let _ = self.cmd_tx.send(GuiCommand::TestProfile(p.id));
                                     ui.close_menu();
                                 }
@@ -427,10 +578,11 @@ impl ThroneApp {
 
                         // 5. Test Result
                         row.col(|ui| {
-                            let resp = ui.selectable_label(
-                                is_selected,
-                                RichText::new(&latency_str).color(Color32::from_rgb(227, 179, 65)),
-                            );
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
+                            let text = RichText::new(&latency_str).color(Color32::WHITE);
+                            let resp = ui.selectable_label(false, text);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -438,10 +590,11 @@ impl ThroneApp {
 
                         // 6. Traffic
                         row.col(|ui| {
-                            let resp = ui.selectable_label(
-                                is_selected,
-                                RichText::new(&traffic_str).color(Color32::from_rgb(139, 148, 158)),
-                            );
+                            if is_selected {
+                                ui.painter().rect_filled(ui.max_rect(), 0.0, purple_bg);
+                            }
+                            let text = RichText::new(&traffic_str).color(Color32::WHITE);
+                            let resp = ui.selectable_label(false, text);
                             if resp.clicked() {
                                 self.selected_profile_id = Some(p.id);
                             }
@@ -453,13 +606,12 @@ impl ThroneApp {
 
     fn render_bottom_tabs(&mut self, ui: &mut Ui) {
         ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing = vec2(2.0, 0.0);
+            ui.spacing_mut().item_spacing = vec2(3.0, 0.0);
 
             let tabs = [
                 (BottomTab::Logs, "Logs"),
                 (BottomTab::Connections, "Connections"),
                 (BottomTab::TrafficGraph, "Traffic Graph"),
-                (BottomTab::RuntimeStats, "Runtime Stats"),
             ];
 
             for (tab, title) in tabs {
@@ -467,19 +619,19 @@ impl ThroneApp {
                 let text = RichText::new(title).color(if is_active {
                     Color32::WHITE
                 } else {
-                    Color32::from_rgb(139, 148, 158)
+                    Color32::from_rgb(140, 148, 158)
                 });
 
                 let fill = if is_active {
-                    Color32::from_rgb(33, 42, 58)
+                    Color32::from_rgb(36, 40, 48)
                 } else {
-                    Color32::from_rgb(18, 22, 31)
+                    Color32::from_rgb(22, 24, 28)
                 };
 
                 let btn = Button::new(text)
                     .fill(fill)
                     .corner_radius(egui::CornerRadius::same(3))
-                    .min_size(vec2(75.0, 22.0));
+                    .min_size(vec2(76.0, 22.0));
 
                 if ui.add(btn).clicked() {
                     self.active_bottom_tab = tab;
@@ -493,27 +645,34 @@ impl ThroneApp {
             });
         });
 
-        ui.separator();
+        ui.add_space(2.0);
 
         match self.active_bottom_tab {
             BottomTab::Logs => {
-                ScrollArea::vertical()
-                    .auto_shrink([false, false])
-                    .stick_to_bottom(self.auto_scroll_logs)
+                egui::Frame::NONE
+                    .fill(Color32::from_rgb(16, 16, 16))
+                    .inner_margin(6.0)
                     .show(ui, |ui| {
-                        ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
-                        for line in &self.log_lines {
-                            let color = if line.contains("[ERROR]") {
-                                Color32::from_rgb(248, 81, 73)
-                            } else if line.contains("[SUCCESS]") || line.contains("Core Has Successfully") {
-                                Color32::from_rgb(63, 185, 80)
-                            } else if line.contains("[INIT]") || line.contains("[CONNECT]") {
-                                Color32::from_rgb(88, 166, 255)
-                            } else {
-                                Color32::from_rgb(201, 209, 217)
-                            };
-                            ui.colored_label(color, line);
-                        }
+                        ScrollArea::vertical()
+                            .auto_shrink([false, false])
+                            .stick_to_bottom(self.auto_scroll_logs)
+                            .show(ui, |ui| {
+                                ui.style_mut().override_font_id = Some(egui::FontId::monospace(12.0));
+                                for line in &self.log_lines {
+                                    let color = if line.contains("[ERROR]") || line.contains("FATAL") {
+                                        Color32::from_rgb(248, 81, 73)
+                                    } else if line.contains("[SUCCESS]") || line.contains("Core Has Successfully") {
+                                        Color32::from_rgb(63, 185, 80)
+                                    } else if line.contains("[INIT]") || line.contains("[CONNECT]") || line.contains("INFO") {
+                                        Color32::from_rgb(88, 166, 255)
+                                    } else if line.contains("WARN") {
+                                        Color32::from_rgb(227, 179, 65)
+                                    } else {
+                                        Color32::from_rgb(201, 209, 217)
+                                    };
+                                    ui.colored_label(color, line);
+                                }
+                            });
                     });
             }
             BottomTab::TrafficGraph => {
@@ -540,23 +699,14 @@ impl ThroneApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(20.0);
                     if self.status.running {
-                        ui.heading("Aktif Tünel Bağlantıları");
+                        ui.heading("Aktif Tünel ve Vekil Bağlantıları");
                         ui.label(format!("Inbound Dinleyici: 127.0.0.1:{}", self.status.inbound_port));
                         ui.label(format!("DPI Atlama: 127.0.0.1:1080 (ciadpi - {})", self.settings.byedpi_preset));
+                        ui.label(format!("TUN Durumu: {}", if self.status.tun_enabled { "Açık (throne-tun)" } else { "Kapalı" }));
+                        ui.label(format!("Sistem Vekili: {}", if self.status.system_proxy { "Açık (127.0.0.1:2080)" } else { "Kapalı" }));
                     } else {
                         ui.label("Bağlantı aktif değil.");
                     }
-                });
-            }
-            BottomTab::RuntimeStats => {
-                ui.horizontal(|ui| {
-                    ui.vertical(|ui| {
-                        ui.heading("Çalışma İstatistikleri");
-                        ui.label("Throne Sürümü: 1.4.0 (Rust 2024 Edition)");
-                        ui.label(format!("ByeDPI Durumu: {}", if self.status.byedpi_running { "Çalışıyor" } else { "Durduruldu" }));
-                        ui.label(format!("TUN Durumu: {}", if self.status.tun_enabled { "Açık" } else { "Kapalı" }));
-                        ui.label(format!("Sistem Vekili: {}", if self.status.system_proxy { "Açık" } else { "Kapalı" }));
-                    });
                 });
             }
         }
@@ -566,40 +716,42 @@ impl ThroneApp {
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing = vec2(16.0, 0.0);
 
-            // Left: Status
-            if self.status.running {
-                let name = self
-                    .status
-                    .active_profile_id
-                    .and_then(|id| self.profiles.iter().find(|p| p.id == id).map(|p| p.name.as_str()))
-                    .unwrap_or("Aktif Profil");
-                ui.colored_label(
-                    Color32::from_rgb(63, 185, 80),
-                    format!("🟢 Running: {}", name),
-                );
+            // Left: [Default] Profile Name + location
+            let active_profile_name = self
+                .status
+                .active_profile_id
+                .and_then(|id| self.profiles.iter().find(|p| p.id == id).map(|p| p.name.clone()))
+                .unwrap_or_else(|| {
+                    if !self.profiles.is_empty() {
+                        self.profiles[0].name.clone()
+                    } else {
+                        "My Config".into()
+                    }
+                });
+
+            let status_prefix = if self.status.running {
+                "🟢"
             } else {
-                ui.colored_label(Color32::from_rgb(139, 148, 158), "⚪ Not Running");
-            }
+                "⚪"
+            };
+
+            ui.colored_label(
+                if self.status.running { Color32::from_rgb(63, 185, 80) } else { Color32::from_rgb(140, 148, 158) },
+                format!("{} [Default] {}  🇩🇪 Germany", status_prefix, active_profile_name),
+            );
 
             ui.separator();
 
-            // Center: Mixed & ByeDPI port
+            // Center: Mixed inbound address & port
             ui.colored_label(
-                Color32::from_rgb(139, 148, 158),
+                Color32::from_rgb(140, 148, 158),
                 format!("Mixed: {}:{}", self.status.inbound_address, self.status.inbound_port),
             );
 
-            if self.status.byedpi_running {
-                ui.colored_label(
-                    Color32::from_rgb(88, 166, 255),
-                    "ByeDPI: 127.0.0.1:1080 (Vodafone)",
-                );
-            }
-
-            // Right: Speeds
+            // Right: Speeds matching old Throne status bar
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.label(format!(
-                    "Proxy: {} ↑  {} ↓",
+                    "Proxy: {} ↑  {} ↓   Direct: 0.00 B↑ 0.00 B↓",
                     Self::format_speed(self.current_up_bytes),
                     Self::format_speed(self.current_down_bytes)
                 ));
@@ -647,42 +799,238 @@ impl ThroneApp {
         }
 
         let mut open = true;
-        egui::Window::new("Ayarlar (Settings)")
+        egui::Window::new("Ayarlar (Preferences)")
             .open(&mut open)
             .collapsible(false)
-            .resizable(false)
+            .resizable(true)
+            .default_size(vec2(580.0, 480.0))
             .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
             .show(ctx, |ui| {
-                ui.set_width(380.0);
-                egui::Grid::new("settings_grid").num_columns(2).spacing([12.0, 8.0]).show(ui, |ui| {
-                    ui.label("Inbound Port:");
-                    ui.add(egui::DragValue::new(&mut self.settings.inbound_port));
-                    ui.end_row();
+                // Tab bar matching old Throne
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing = vec2(4.0, 0.0);
+                    let tabs = [
+                        (SettingsTab::Common, "Genel (Common)"),
+                        (SettingsTab::Core, "Çekirdek (Core)"),
+                        (SettingsTab::Dns, "DNS"),
+                        (SettingsTab::Tun, "TUN / VPN"),
+                        (SettingsTab::Routing, "Yönlendirme"),
+                        (SettingsTab::ByeDpi, "ByeDPI (Vodafone)"),
+                        (SettingsTab::SystemProxy, "Sistem Vekili"),
+                    ];
 
-                    ui.label("TUN Arayüzü:");
-                    ui.text_edit_singleline(&mut self.settings.tun_interface_name);
-                    ui.end_row();
+                    for (tab, name) in tabs {
+                        let is_active = self.active_settings_tab == tab;
+                        let text = RichText::new(name).color(if is_active { Color32::WHITE } else { Color32::from_rgb(150, 160, 172) });
+                        let fill = if is_active { Color32::from_rgb(43, 114, 214) } else { Color32::from_rgb(26, 30, 38) };
+                        if ui.add(Button::new(text).fill(fill).corner_radius(egui::CornerRadius::same(3))).clicked() {
+                            self.active_settings_tab = tab;
+                        }
+                    }
+                });
 
-                    ui.label("Uzak DNS:");
-                    ui.text_edit_singleline(&mut self.settings.remote_dns);
-                    ui.end_row();
+                ui.separator();
 
-                    ui.label("Doğrudan DNS:");
-                    ui.text_edit_singleline(&mut self.settings.direct_dns);
-                    ui.end_row();
+                ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                    match self.active_settings_tab {
+                        SettingsTab::Common => {
+                            ui.heading("Inbound & Genel Ayarlar");
+                            ui.add_space(6.0);
+                            egui::Grid::new("common_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("Inbound Dinleme Portu:");
+                                ui.add(egui::DragValue::new(&mut self.settings.inbound_port).range(1024..=65535));
+                                ui.end_row();
 
-                    ui.label("ByeDPI Komutu / Argüman:");
-                    ui.text_edit_singleline(&mut self.settings.byedpi_args);
-                    ui.end_row();
+                                ui.label("Inbound Dinleme Adresi:");
+                                ui.text_edit_singleline(&mut self.settings.inbound_address);
+                                ui.end_row();
+
+                                ui.label("Yerel Ağa İzin Ver (Allow LAN):");
+                                let mut allow_lan = self.settings.inbound_address == "0.0.0.0" || self.settings.inbound_address == "::";
+                                if ui.checkbox(&mut allow_lan, "Tüm arayüzlerde dinle (0.0.0.0)").changed() {
+                                    self.settings.inbound_address = if allow_lan { "0.0.0.0".into() } else { "127.0.0.1".into() };
+                                }
+                                ui.end_row();
+
+                                ui.label("Uzak API Etkinleştir:");
+                                ui.checkbox(&mut self.settings.remote_api_enable, "9095 HTTP/REST API");
+                                ui.end_row();
+
+                                ui.label("API Portu:");
+                                ui.add(egui::DragValue::new(&mut self.settings.remote_api_port).range(1024..=65535));
+                                ui.end_row();
+                            });
+                        }
+                        SettingsTab::Core => {
+                            ui.heading("Çekirdek İşlemleri & Seçenekler");
+                            ui.add_space(6.0);
+                            egui::Grid::new("core_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("Çekirdek Program Yolu:");
+                                ui.text_edit_singleline(&mut self.settings.core_path);
+                                ui.end_row();
+
+                                ui.label("Günlük Ayrıntı Düzeyi (Log Level):");
+                                egui::ComboBox::from_id_salt("core_log_lvl")
+                                    .selected_text(&self.settings.log_level)
+                                    .show_ui(ui, |ui| {
+                                        for lvl in &["trace", "debug", "info", "warn", "error"] {
+                                            ui.selectable_value(&mut self.settings.log_level, lvl.to_string(), *lvl);
+                                        }
+                                    });
+                                ui.end_row();
+
+                                ui.label("TCP MUX (Çoklama):");
+                                ui.checkbox(&mut self.settings.mux_enabled, "Bağlantıları birleştir");
+                                ui.end_row();
+                            });
+                        }
+                        SettingsTab::Dns => {
+                            ui.heading("DNS & Alan Adı Çözümleme Ayarları");
+                            ui.add_space(6.0);
+                            egui::Grid::new("dns_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("Uzak DNS (Remote DNS - DoH / Proxy):");
+                                ui.text_edit_singleline(&mut self.settings.remote_dns);
+                                ui.end_row();
+
+                                ui.label("Doğrudan DNS (Direct DNS):");
+                                ui.text_edit_singleline(&mut self.settings.direct_dns);
+                                ui.end_row();
+
+                                ui.label("Sahte DNS (FakeDNS):");
+                                ui.checkbox(&mut self.settings.fake_dns, "FakeDNS Havuzunu Kullan");
+                                ui.end_row();
+
+                                ui.label("Ön Tanımlı Alan Adları (Predefined):");
+                                ui.checkbox(&mut self.settings.dns_predefined_enable, "Discord & Roblox doğrudan IP çözümlemesi");
+                                ui.end_row();
+                            });
+
+                            ui.add_space(8.0);
+                            ui.label("Ön Tanımlı DNS Eşlemeleri (Her satıra bir 'IP AlanAdı' formatı):");
+                            ui.add(
+                                egui::TextEdit::multiline(&mut self.dns_predefined_text)
+                                    .desired_rows(6)
+                                    .desired_width(ui.available_width() - 10.0),
+                            );
+                        }
+                        SettingsTab::Tun => {
+                            ui.heading("TUN / VPN Sanal Ağ Arayüzü");
+                            ui.add_space(6.0);
+                            egui::Grid::new("tun_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("TUN Modu:");
+                                ui.checkbox(&mut self.settings.enable_tun, "TUN Sanal Arayüzünü Etkinleştir");
+                                ui.end_row();
+
+                                ui.label("Arayüz Adı (Interface Name):");
+                                ui.text_edit_singleline(&mut self.settings.tun_interface_name);
+                                ui.end_row();
+
+                                ui.label("Ağ Yığını (Network Stack):");
+                                egui::ComboBox::from_id_salt("tun_stack_combo")
+                                    .selected_text(&self.settings.tun_stack)
+                                    .show_ui(ui, |ui| {
+                                        for st in &["system", "gvisor", "mixed"] {
+                                            ui.selectable_value(&mut self.settings.tun_stack, st.to_string(), *st);
+                                        }
+                                    });
+                                ui.end_row();
+
+                                ui.label("Sıkı Yönlendirme (Strict Route):");
+                                ui.checkbox(&mut self.settings.tun_strict_route, "Tüm trafiği zorla yönlendir");
+                                ui.end_row();
+                            });
+                        }
+                        SettingsTab::Routing => {
+                            ui.heading("Yönlendirme & Kural Profili");
+                            ui.add_space(6.0);
+                            let cur_rid = self.settings.active_route_id.unwrap_or(1);
+                            let cur_name = self.routes.iter().find(|r| r.id == cur_rid).map(|r| r.name.as_str()).unwrap_or("Default / Roblox ve Discord");
+
+                            ui.horizontal(|ui| {
+                                ui.label("Aktif Kural Profili:");
+                                egui::ComboBox::from_id_salt("route_profile_combo")
+                                    .selected_text(cur_name)
+                                    .show_ui(ui, |ui| {
+                                        for r in &self.routes {
+                                            if ui.selectable_label(r.id == cur_rid, &r.name).clicked() {
+                                                self.settings.active_route_id = Some(r.id);
+                                            }
+                                        }
+                                    });
+                            });
+
+                            ui.add_space(8.0);
+                            ui.label("Dahili Kurallar:");
+                            ui.label("• ciadpi (ByeDPI) -> Direct (Döngü koruması)");
+                            ui.label("• Port 53 / Protocol DNS -> Hijack-DNS (Şifreli DoH)");
+                            ui.label("• Özel IP Aralıkları (Private RFC1918) -> Direct");
+                            ui.label("• Discord & Roblox (updates.discord.com, roblox.com) -> Proxy (ByeDPI)");
+                        }
+                        SettingsTab::ByeDpi => {
+                            ui.heading("ByeDPI (ciadpi) Vodafone DPI Atlama Denetimi");
+                            ui.add_space(6.0);
+                            egui::Grid::new("byedpi_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("Otomatik Başlat:");
+                                ui.checkbox(&mut self.settings.byedpi_enable, "Profile bağlanınca ByeDPI'ı otomatik başlat");
+                                ui.end_row();
+
+                                ui.label("ByeDPI Dosya Yolu:");
+                                ui.text_edit_singleline(&mut self.settings.byedpi_path);
+                                ui.end_row();
+
+                                ui.label("DPI Atlama Önayarı (Preset):");
+                                egui::ComboBox::from_id_salt("byedpi_preset_combo")
+                                    .selected_text(&self.settings.byedpi_preset)
+                                    .show_ui(ui, |ui| {
+                                        if ui.selectable_value(&mut self.settings.byedpi_preset, "vodafone".into(), "Vodafone DPI Bypass (-s1 -At -d2 -f-1 -r1+s -An)").clicked() {
+                                            self.settings.byedpi_args = "-s1 -At -d2 -f-1 -r1+s -An".into();
+                                        }
+                                        if ui.selectable_value(&mut self.settings.byedpi_preset, "standard".into(), "Standard Bypass (-s1 -q1 -Y -Ar)").clicked() {
+                                            self.settings.byedpi_args = "-s1 -q1 -Y -Ar".into();
+                                        }
+                                        if ui.selectable_value(&mut self.settings.byedpi_preset, "custom".into(), "Özel (Custom)").clicked() {}
+                                    });
+                                ui.end_row();
+
+                                ui.label("Komut Satırı Parametreleri:");
+                                ui.text_edit_singleline(&mut self.settings.byedpi_args);
+                                ui.end_row();
+                            });
+                        }
+                        SettingsTab::SystemProxy => {
+                            ui.heading("Sistem Vekil Sunucusu (System Proxy)");
+                            ui.add_space(6.0);
+                            egui::Grid::new("sysproxy_grid").num_columns(2).spacing([14.0, 10.0]).show(ui, |ui| {
+                                ui.label("Sistem Vekili Etkin:");
+                                ui.checkbox(&mut self.settings.system_proxy, "HTTP/HTTPS/SOCKS sistem vekili");
+                                ui.end_row();
+                            });
+
+                            ui.add_space(8.0);
+                            ui.label("Desteklenen Masaüstü ve Ortamlar:");
+                            ui.label("• KDE Plasma 6 & 5 (kioslaverc ve KIO Scheduler)");
+                            ui.label("• GNOME (gsettings org.gnome.system.proxy)");
+                            ui.label("• Electron / Discord (systemd user environment http_proxy/all_proxy)");
+                        }
+                    }
                 });
 
                 ui.add_space(10.0);
+                ui.separator();
                 ui.horizontal(|ui| {
-                    if ui.button("Kaydet").clicked() {
+                    if ui.button("💾 Kaydet (Save)").clicked() {
+                        // Parse updated predefined rules text
+                        self.settings.dns_predefined_rules = self
+                            .dns_predefined_text
+                            .lines()
+                            .map(|s| s.trim().to_string())
+                            .filter(|s| !s.is_empty())
+                            .collect();
+
                         let _ = self.cmd_tx.send(GuiCommand::SaveSettings(Box::new(self.settings.clone())));
                         self.show_settings_dialog = false;
                     }
-                    if ui.button("Kapat").clicked() {
+                    if ui.button("❌ İptal (Cancel)").clicked() {
                         self.show_settings_dialog = false;
                     }
                 });
@@ -698,7 +1046,7 @@ impl eframe::App for ThroneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_events();
 
-        // Top Panel: Toolbar
+        // Top Panel: Toolbar & Groups row
         egui::TopBottomPanel::top("top_panel")
             .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
             .show(ctx, |ui| {
@@ -707,19 +1055,19 @@ impl eframe::App for ThroneApp {
                 self.render_group_tabs(ui);
             });
 
-        // Bottom Panel: Status bar
+        // Bottom Panel: Status bar matching old Throne
         egui::TopBottomPanel::bottom("status_bar")
             .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(6.0))
             .show(ctx, |ui| {
                 self.render_status_bar(ui);
             });
 
-        // Bottom Split Panel: Logs, Connections, Graph, Stats
+        // Bottom Split Panel: Logs, Connections, Traffic Graph
         egui::TopBottomPanel::bottom("bottom_tabs_panel")
             .resizable(true)
             .default_height(220.0)
             .min_height(120.0)
-            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(8.0))
+            .frame(egui::Frame::side_top_panel(&ctx.style()).inner_margin(6.0))
             .show(ctx, |ui| {
                 self.render_bottom_tabs(ui);
             });
@@ -735,7 +1083,7 @@ impl eframe::App for ThroneApp {
         self.render_import_dialog(ctx);
         self.render_settings_dialog(ctx);
 
-        // Keep UI reactive: request repaint every 500ms for status/graphs
+        // Keep UI reactive
         ctx.request_repaint_after(Duration::from_millis(500));
     }
 }

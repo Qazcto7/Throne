@@ -1,4 +1,4 @@
-use throne_core::{Group, Profile, Settings};
+use throne_core::{Group, Profile, RouteProfile, Settings};
 
 #[derive(Debug)]
 pub enum GuiCommand {
@@ -10,6 +10,7 @@ pub enum GuiCommand {
     ToggleByeDpi(bool),
     #[allow(dead_code)]
     SetByeDpiPreset(String),
+    SetRouteProfile(i64),
     TestProfile(i64),
     DeleteProfile(i64),
     ImportSource(String, i64),
@@ -21,6 +22,7 @@ pub enum GuiCommand {
 #[derive(Debug, Clone)]
 pub struct StatusState {
     pub running: bool,
+    #[allow(dead_code)]
     pub byedpi_running: bool,
     pub active_profile_id: Option<i64>,
     pub tun_enabled: bool,
@@ -35,6 +37,7 @@ pub enum GuiEvent {
     LogAppended(String),
     ProfilesUpdated(Vec<Profile>),
     GroupsUpdated(Vec<Group>),
+    RoutesUpdated(Vec<RouteProfile>),
     SettingsUpdated(Box<Settings>),
     LatencyUpdated(i64, Option<i32>),
     SpeedSample { up_bytes: f64, down_bytes: f64 },
