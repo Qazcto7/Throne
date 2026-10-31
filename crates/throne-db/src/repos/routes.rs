@@ -136,32 +136,45 @@ impl RoutesRepo {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, route_profile_id, rule_order, name, target,
-                   domains_json, domain_suffixes_json, domain_keywords_json, ip_cidrs_json, rule_sets_json
+            SELECT route_profile_id, rule_order, name, outbound_id,
+                   COALESCE(domain_json, '[]'),
+                   COALESCE(domain_suffix_json, '[]'),
+                   COALESCE(domain_keyword_json, '[]'),
+                   COALESCE(ip_cidr_json, '[]'),
+                   COALESCE(process_name_json, '[]'),
+                   COALESCE(rule_set_json, '[]')
             FROM route_rules WHERE route_profile_id = ?1 ORDER BY rule_order ASC
             "#,
         )?;
 
         let rows = stmt.query_map(params![profile_id], |row| {
-            let id: i64 = row.get(0)?;
-            let route_profile_id: i64 = row.get(1)?;
-            let rule_order: i32 = row.get(2)?;
-            let name: String = row.get(3)?;
-            let target: String = row.get(4)?;
-            let d_str: String = row.get(5)?;
-            let s_str: String = row.get(6)?;
-            let k_str: String = row.get(7)?;
-            let ip_str: String = row.get(8)?;
+            let route_profile_id: i64 = row.get(0)?;
+            let rule_order: i32 = row.get(1)?;
+            let name: String = row.get(2)?;
+            let outbound_id: i64 = row.get(3)?;
+            let d_str: String = row.get(4)?;
+            let s_str: String = row.get(5)?;
+            let k_str: String = row.get(6)?;
+            let ip_str: String = row.get(7)?;
+            let p_str: String = row.get(8)?;
             let rs_str: String = row.get(9)?;
+
+            let target = match outbound_id {
+                -1 => "proxy".to_string(),
+                -2 => "direct".to_string(),
+                -3 => "block".to_string(),
+                _ => "direct".to_string(),
+            };
 
             let domains = serde_json::from_str(&d_str).unwrap_or_default();
             let domain_suffixes = serde_json::from_str(&s_str).unwrap_or_default();
             let domain_keywords = serde_json::from_str(&k_str).unwrap_or_default();
             let ip_cidrs = serde_json::from_str(&ip_str).unwrap_or_default();
+            let process_names = serde_json::from_str(&p_str).unwrap_or_default();
             let rule_sets = serde_json::from_str(&rs_str).unwrap_or_default();
 
             Ok(RouteRule {
-                id,
+                id: rule_order as i64,
                 route_profile_id,
                 rule_order,
                 name,
@@ -170,6 +183,7 @@ impl RoutesRepo {
                 domain_suffixes,
                 domain_keywords,
                 ip_cidrs,
+                process_names,
                 rule_sets,
             })
         })?;

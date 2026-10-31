@@ -190,9 +190,29 @@ impl CoreRunner {
     pub async fn stop(&self) -> anyhow::Result<()> {
         let mut child_guard = self.child.lock().await;
         if let Some(mut child) = child_guard.take() {
-            info!("Stopping proxy core process...");
-            let _ = child.kill().await;
-            let _ = child.wait().await;
+            info!("Stopping proxy core process gracefully...");
+            #[cfg(unix)]
+            if let Some(pid) = child.id() {
+                let _ = std::process::Command::new("kill")
+                    .arg("-15")
+                    .arg(pid.to_string())
+                    .status();
+            }
+
+            // Wait up to 1200ms for graceful exit so sing-box removes TUN routes
+            let mut exited = false;
+            for _ in 0..12 {
+                if let Ok(Some(_)) = child.try_wait() {
+                    exited = true;
+                    break;
+                }
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+            }
+
+            if !exited {
+                let _ = child.kill().await;
+                let _ = child.wait().await;
+            }
         }
 
         let mut cfg_guard = self.config_file.lock().await;

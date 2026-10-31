@@ -31,6 +31,24 @@ impl SystemProxyManager {
             let _ = Command::new("gsettings")
                 .args(["set", "org.gnome.system.proxy", "mode", "manual"])
                 .status();
+
+            // KDE Plasma 6 / 5 (kwriteconfig)
+            let http_url = format!("http://{}:{}", host, port);
+            let socks_url = format!("socks://{}:{}", host, port);
+            for tool in &["kwriteconfig6", "kwriteconfig5"] {
+                let _ = Command::new(tool)
+                    .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "ProxyType", "1"])
+                    .status();
+                let _ = Command::new(tool)
+                    .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "httpProxy", &http_url])
+                    .status();
+                let _ = Command::new(tool)
+                    .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "httpsProxy", &http_url])
+                    .status();
+                let _ = Command::new(tool)
+                    .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "socksProxy", &socks_url])
+                    .status();
+            }
         }
 
         Ok(())
@@ -44,6 +62,12 @@ impl SystemProxyManager {
             let _ = Command::new("gsettings")
                 .args(["set", "org.gnome.system.proxy", "mode", "none"])
                 .status();
+
+            for tool in &["kwriteconfig6", "kwriteconfig5"] {
+                let _ = Command::new(tool)
+                    .args(["--file", "kioslaverc", "--group", "Proxy Settings", "--key", "ProxyType", "0"])
+                    .status();
+            }
         }
 
         Ok(())

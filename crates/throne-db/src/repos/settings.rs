@@ -73,6 +73,8 @@ impl SettingsRepo {
         }
         if let Some(v) = self.get_value("active_route_id")? {
             s.active_route_id = v.parse().ok();
+        } else if let Some(v) = self.get_value("current_route_id")? {
+            s.active_route_id = v.parse().ok();
         }
         if let Some(v) = self.get_value("mux_enabled")? {
             s.mux_enabled = v == "true" || v == "1";
@@ -130,6 +132,7 @@ impl SettingsRepo {
         }
         if let Some(id) = s.active_route_id {
             self.set_value("active_route_id", &id.to_string())?;
+            self.set_value("current_route_id", &id.to_string())?;
         }
         self.set_value("mux_enabled", if s.mux_enabled { "1" } else { "0" })?;
         self.set_value("fake_dns", if s.fake_dns { "1" } else { "0" })?;

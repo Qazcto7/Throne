@@ -56,6 +56,7 @@ pub struct RouteRule {
     pub domain_suffixes: Vec<String>,
     pub domain_keywords: Vec<String>,
     pub ip_cidrs: Vec<String>,
+    pub process_names: Vec<String>,
     pub rule_sets: Vec<String>,
 }
 
@@ -71,6 +72,7 @@ impl Default for RouteRule {
             domain_suffixes: Vec::new(),
             domain_keywords: Vec::new(),
             ip_cidrs: Vec::new(),
+            process_names: Vec::new(),
             rule_sets: Vec::new(),
         }
     }

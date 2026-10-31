@@ -208,7 +208,7 @@ impl<'a> SingBoxGenerator<'a> {
 
         // TUN inbound if enabled
         if self.settings.enable_tun {
-            let mut tun_obj = json!({
+            let tun_obj = json!({
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": self.settings.tun_interface_name,
@@ -219,10 +219,6 @@ impl<'a> SingBoxGenerator<'a> {
                 "dns_mode": "hijack",
                 "route_exclude_address": ["127.0.0.0/8"]
             });
-            #[cfg(target_os = "linux")]
-            {
-                tun_obj["auto_redirect"] = json!(true);
-            }
             inbounds.push(tun_obj);
         }
 
@@ -496,7 +492,35 @@ impl<'a> SingBoxGenerator<'a> {
             "outbound": "direct"
         }));
 
-        // 6. Custom rules from RouteProfile
+        // 6. Essential Discord and Roblox routing to proxy outbound (ByeDPI bypass)
+        rules.push(json!({
+            "process_name": [
+                "Discord",
+                "discord",
+                "updater_bootstrap",
+                "DiscordCanary",
+                "DiscordPTB",
+                "RobloxPlayerBeta.exe",
+                "RobloxStudioBeta.exe"
+            ],
+            "outbound": "proxy"
+        }));
+        rules.push(json!({
+            "domain_suffix": [
+                "discord.com",
+                "discordapp.com",
+                "discord.gg",
+                "discordapp.net",
+                "discordcdn.com",
+                "discord.media",
+                "roblox.com",
+                "rbxcdn.com",
+                "rbxinfra.com"
+            ],
+            "outbound": "proxy"
+        }));
+
+        // 7. Custom rules from RouteProfile
         for r in self.route_rules {
             let mut rule_obj = json!({
                 "outbound": r.target
@@ -517,6 +541,10 @@ impl<'a> SingBoxGenerator<'a> {
             }
             if !r.ip_cidrs.is_empty() {
                 rule_obj["ip_cidr"] = json!(r.ip_cidrs);
+                has_conditions = true;
+            }
+            if !r.process_names.is_empty() {
+                rule_obj["process_name"] = json!(r.process_names);
                 has_conditions = true;
             }
             if !r.rule_sets.is_empty() {
