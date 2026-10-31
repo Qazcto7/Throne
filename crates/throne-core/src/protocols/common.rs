@@ -21,9 +21,10 @@ pub struct RealityConfig {
     pub short_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 #[serde(tag = "type", rename_all = "lowercase")]
 pub enum TransportConfig {
+    #[default]
     Tcp,
     Ws {
         #[serde(skip_serializing_if = "Option::is_none")]
@@ -41,12 +42,6 @@ pub enum TransportConfig {
         #[serde(skip_serializing_if = "Option::is_none")]
         path: Option<String>,
     },
-}
-
-impl Default for TransportConfig {
-    fn default() -> Self {
-        TransportConfig::Tcp
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]

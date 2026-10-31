@@ -179,17 +179,15 @@ impl<'a> SingBoxGenerator<'a> {
                     if !v.tls.alpn.is_empty() {
                         tls_obj["alpn"] = json!(v.tls.alpn);
                     }
-                    if let Some(ref r) = v.tls.reality {
-                        if r.enabled {
-                            let mut reality_obj = json!({
-                                "enabled": true,
-                                "public_key": r.public_key
-                            });
-                            if let Some(ref sid) = r.short_id {
-                                reality_obj["short_id"] = json!(sid);
-                            }
-                            tls_obj["reality"] = reality_obj;
+                    if let Some(r) = v.tls.reality.as_ref().filter(|r| r.enabled) {
+                        let mut reality_obj = json!({
+                            "enabled": true,
+                            "public_key": r.public_key
+                        });
+                        if let Some(ref sid) = r.short_id {
+                            reality_obj["short_id"] = json!(sid);
                         }
+                        tls_obj["reality"] = reality_obj;
                     }
                     obj["tls"] = tls_obj;
                 }

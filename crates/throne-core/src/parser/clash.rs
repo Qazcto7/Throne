@@ -1,6 +1,14 @@
 use crate::error::{CoreError, Result};
 use crate::protocols::*;
-use serde_yaml::Value;
+use serde_yaml::{Mapping, Value};
+
+fn get_val<'a>(map: &'a Mapping, key: &str) -> Option<&'a Value> {
+    map.get(Value::from(key))
+}
+
+fn get_str<'a>(map: &'a Mapping, key: &str) -> Option<&'a str> {
+    get_val(map, key).and_then(|v| v.as_str())
+}
 
 pub fn parse_clash(yaml_str: &str) -> Result<Vec<(String, OutboundConfig)>> {
     let root: Value = serde_yaml::from_str(yaml_str).map_err(CoreError::YamlError)?;
@@ -13,41 +21,17 @@ pub fn parse_clash(yaml_str: &str) -> Result<Vec<(String, OutboundConfig)>> {
 
     for proxy in proxies {
         if let Some(map) = proxy.as_mapping() {
-            let name = map
-                .get(&Value::String("name".to_string()))
-                .and_then(|v| v.as_str())
-                .unwrap_or("Proxy")
-                .to_string();
-
-            let ptype = map
-                .get(&Value::String("type".to_string()))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_lowercase();
-
-            let server = map
-                .get(&Value::String("server".to_string()))
-                .and_then(|v| v.as_str())
-                .unwrap_or("")
-                .to_string();
-
-            let port = map
-                .get(&Value::String("port".to_string()))
+            let name = get_str(map, "name").unwrap_or("Proxy").to_string();
+            let ptype = get_str(map, "type").unwrap_or("").to_lowercase();
+            let server = get_str(map, "server").unwrap_or("").to_string();
+            let port = get_val(map, "port")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(443) as u16;
 
             match ptype.as_str() {
                 "ss" => {
-                    let cipher = map
-                        .get(&Value::String("cipher".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("aes-256-gcm")
-                        .to_string();
-                    let password = map
-                        .get(&Value::String("password".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
+                    let cipher = get_str(map, "cipher").unwrap_or("aes-256-gcm").to_string();
+                    let password = get_str(map, "password").unwrap_or("").to_string();
 
                     results.push((
                         name,
@@ -63,15 +47,8 @@ pub fn parse_clash(yaml_str: &str) -> Result<Vec<(String, OutboundConfig)>> {
                     ));
                 }
                 "trojan" => {
-                    let password = map
-                        .get(&Value::String("password".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let sni = map
-                        .get(&Value::String("sni".to_string()))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let password = get_str(map, "password").unwrap_or("").to_string();
+                    let sni = get_str(map, "sni").map(|s| s.to_string());
 
                     results.push((
                         name,
@@ -90,28 +67,15 @@ pub fn parse_clash(yaml_str: &str) -> Result<Vec<(String, OutboundConfig)>> {
                     ));
                 }
                 "vmess" => {
-                    let uuid = map
-                        .get(&Value::String("uuid".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let alter_id = map
-                        .get(&Value::String("alterId".to_string()))
+                    let uuid = get_str(map, "uuid").unwrap_or("").to_string();
+                    let alter_id = get_val(map, "alterId")
                         .and_then(|v| v.as_u64())
                         .unwrap_or(0) as u32;
-                    let cipher = map
-                        .get(&Value::String("cipher".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("auto")
-                        .to_string();
-                    let tls = map
-                        .get(&Value::String("tls".to_string()))
+                    let cipher = get_str(map, "cipher").unwrap_or("auto").to_string();
+                    let tls = get_val(map, "tls")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
-                    let sni = map
-                        .get(&Value::String("servername".to_string()))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let sni = get_str(map, "servername").map(|s| s.to_string());
 
                     results.push((
                         name,
@@ -132,23 +96,12 @@ pub fn parse_clash(yaml_str: &str) -> Result<Vec<(String, OutboundConfig)>> {
                     ));
                 }
                 "vless" => {
-                    let uuid = map
-                        .get(&Value::String("uuid".to_string()))
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let flow = map
-                        .get(&Value::String("flow".to_string()))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    let tls = map
-                        .get(&Value::String("tls".to_string()))
+                    let uuid = get_str(map, "uuid").unwrap_or("").to_string();
+                    let flow = get_str(map, "flow").map(|s| s.to_string());
+                    let tls = get_val(map, "tls")
                         .and_then(|v| v.as_bool())
                         .unwrap_or(true);
-                    let sni = map
-                        .get(&Value::String("servername".to_string()))
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
+                    let sni = get_str(map, "servername").map(|s| s.to_string());
 
                     results.push((
                         name,

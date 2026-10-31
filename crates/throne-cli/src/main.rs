@@ -3,6 +3,7 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
+use std::sync::Arc;
 use throne_api::ApiServer;
 use throne_core::parser::{parse_subscription, parse_uri};
 use throne_core::{Profile, SingBoxGenerator};
@@ -139,11 +140,22 @@ async fn main() -> Result<()> {
             info!("API Key: {}", settings.remote_api_secret);
             info!("Inbound Mixed Port: {}", settings.inbound_port);
 
-            let engine = ThroneEngine::new(db);
+            let engine = std::sync::Arc::new(ThroneEngine::new(db));
             let server_addr = format!("0.0.0.0:{}", settings.remote_api_port);
-            let server = ApiServer::new(key_bytes, engine);
+            let server = ApiServer::new(key_bytes, Arc::clone(&engine));
 
-            server.run(&server_addr).await?;
+            tokio::select! {
+                res = server.run(&server_addr) => {
+                    if let Err(e) = res {
+                        tracing::error!("Server error: {e}");
+                    }
+                }
+                _ = tokio::signal::ctrl_c() => {
+                    info!("Received shutdown signal. Stopping Throne daemon...");
+                    let _ = engine.disconnect().await;
+                    info!("Throne daemon stopped cleanly.");
+                }
+            }
         }
         Commands::Status => {
             let engine = ThroneEngine::new(db);

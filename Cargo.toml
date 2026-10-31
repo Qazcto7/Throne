@@ -10,7 +10,7 @@ resolver = "2"
 
 [workspace.package]
 version = "1.4.0"
-edition = "2021"
+edition = "2024"
 authors = ["Throne Developers <throne@users.noreply.github.com>", "Qazcto7"]
 license = "GPL-3.0-or-later"
 repository = "https://github.com/Qazcto7/Throne"

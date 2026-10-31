@@ -71,10 +71,7 @@ impl CoreRunner {
     pub async fn is_running(&self) -> bool {
         let mut child_guard = self.child.lock().await;
         if let Some(ref mut child) = *child_guard {
-            match child.try_wait() {
-                Ok(None) => true,
-                _ => false,
-            }
+            matches!(child.try_wait(), Ok(None))
         } else {
             false
         }

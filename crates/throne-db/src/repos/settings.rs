@@ -35,10 +35,8 @@ impl SettingsRepo {
     pub fn load_settings(&self) -> Result<Settings> {
         let mut s = Settings::default();
 
-        if let Some(v) = self.get_value("inbound_port")? {
-            if let Ok(p) = v.parse() {
-                s.inbound_port = p;
-            }
+        if let Some(Ok(p)) = self.get_value("inbound_port")?.map(|v| v.parse()) {
+            s.inbound_port = p;
         }
         if let Some(v) = self.get_value("inbound_address")? {
             s.inbound_address = v;
@@ -61,10 +59,8 @@ impl SettingsRepo {
         if let Some(v) = self.get_value("remote_api_enable")? {
             s.remote_api_enable = v == "true" || v == "1";
         }
-        if let Some(v) = self.get_value("remote_api_port")? {
-            if let Ok(p) = v.parse() {
-                s.remote_api_port = p;
-            }
+        if let Some(Ok(p)) = self.get_value("remote_api_port")?.map(|v| v.parse()) {
+            s.remote_api_port = p;
         }
         if let Some(v) = self.get_value("remote_api_secret")? {
             s.remote_api_secret = v;

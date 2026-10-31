@@ -13,8 +13,9 @@ mod tests {
     use super::*;
 
     struct EchoHandler;
+    #[async_trait::async_trait]
     impl ApiHandler for EchoHandler {
-        fn handle(&self, req: ApiRequest) -> ApiResponse {
+        async fn handle(&self, req: ApiRequest) -> ApiResponse {
             ApiResponse::success(req.id, serde_json::json!({ "echo": req.method }))
         }
     }

@@ -2,6 +2,7 @@ use crate::core_runner::CoreRunner;
 use crate::latency::measure_tcp_latency;
 use crate::sub_updater::SubUpdater;
 use crate::system_proxy::SystemProxyManager;
+use async_trait::async_trait;
 use serde_json::json;
 use std::sync::Arc;
 use throne_api::{ApiHandler, ApiRequest, ApiResponse};
@@ -145,39 +146,31 @@ impl ThroneEngine {
     }
 }
 
+#[async_trait]
 impl ApiHandler for ThroneEngine {
-    fn handle(&self, req: ApiRequest) -> ApiResponse {
+    async fn handle(&self, req: ApiRequest) -> ApiResponse {
         let id = req.id;
         match req.method.as_str() {
-            "status" => {
-                let rt = tokio::runtime::Handle::current();
-                match tokio::task::block_in_place(|| rt.block_on(self.status())) {
-                    Ok(val) => ApiResponse::success(id, val),
-                    Err(e) => ApiResponse::err(id, e.to_string()),
-                }
-            }
+            "status" => match self.status().await {
+                Ok(val) => ApiResponse::success(id, val),
+                Err(e) => ApiResponse::err(id, e.to_string()),
+            },
             "connect" => {
                 let pid = req
                     .params
                     .and_then(|p| p.get("profile_id").and_then(|v| v.as_i64()));
                 match pid {
-                    Some(profile_id) => {
-                        let rt = tokio::runtime::Handle::current();
-                        match tokio::task::block_in_place(|| rt.block_on(self.connect(profile_id))) {
-                            Ok(_) => ApiResponse::success(id, json!({ "status": "connected" })),
-                            Err(e) => ApiResponse::err(id, e.to_string()),
-                        }
-                    }
+                    Some(profile_id) => match self.connect(profile_id).await {
+                        Ok(_) => ApiResponse::success(id, json!({ "status": "connected" })),
+                        Err(e) => ApiResponse::err(id, e.to_string()),
+                    },
                     None => ApiResponse::err(id, "Missing profile_id param"),
                 }
             }
-            "disconnect" => {
-                let rt = tokio::runtime::Handle::current();
-                match tokio::task::block_in_place(|| rt.block_on(self.disconnect())) {
-                    Ok(_) => ApiResponse::success(id, json!({ "status": "disconnected" })),
-                    Err(e) => ApiResponse::err(id, e.to_string()),
-                }
-            }
+            "disconnect" => match self.disconnect().await {
+                Ok(_) => ApiResponse::success(id, json!({ "status": "disconnected" })),
+                Err(e) => ApiResponse::err(id, e.to_string()),
+            },
             "profiles" => match self.db.profiles.list_all() {
                 Ok(profiles) => match self.db.groups.list_all() {
                     Ok(groups) => ApiResponse::success(
@@ -196,8 +189,7 @@ impl ApiHandler for ThroneEngine {
                     .params
                     .and_then(|p| p.get("enable").and_then(|v| v.as_bool()))
                     .unwrap_or(false);
-                let rt = tokio::runtime::Handle::current();
-                match tokio::task::block_in_place(|| rt.block_on(self.toggle_tun(enable))) {
+                match self.toggle_tun(enable).await {
                     Ok(_) => ApiResponse::success(id, json!({ "tun": enable })),
                     Err(e) => ApiResponse::err(id, e.to_string()),
                 }
@@ -207,8 +199,7 @@ impl ApiHandler for ThroneEngine {
                     .params
                     .and_then(|p| p.get("enable").and_then(|v| v.as_bool()))
                     .unwrap_or(false);
-                let rt = tokio::runtime::Handle::current();
-                match tokio::task::block_in_place(|| rt.block_on(self.toggle_system_proxy(enable))) {
+                match self.toggle_system_proxy(enable).await {
                     Ok(_) => ApiResponse::success(id, json!({ "system_proxy": enable })),
                     Err(e) => ApiResponse::err(id, e.to_string()),
                 }
@@ -218,8 +209,7 @@ impl ApiHandler for ThroneEngine {
                     .params
                     .and_then(|p| p.get("profile_id").and_then(|v| v.as_i64()));
                 if let Some(profile_id) = pid {
-                    let rt = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| rt.block_on(self.test_profile(profile_id))) {
+                    match self.test_profile(profile_id).await {
                         Ok(latency) => ApiResponse::success(id, json!({ "latency": latency })),
                         Err(e) => ApiResponse::err(id, e.to_string()),
                     }
@@ -232,8 +222,7 @@ impl ApiHandler for ThroneEngine {
                     .params
                     .and_then(|p| p.get("group_id").and_then(|v| v.as_i64()))
                     .unwrap_or(1);
-                let rt = tokio::runtime::Handle::current();
-                match tokio::task::block_in_place(|| rt.block_on(self.sub_updater.update_group(gid))) {
+                match self.sub_updater.update_group(gid).await {
                     Ok(count) => ApiResponse::success(id, json!({ "imported_nodes": count })),
                     Err(e) => ApiResponse::err(id, e.to_string()),
                 }

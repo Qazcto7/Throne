@@ -338,17 +338,13 @@ pub fn parse_hysteria2(url: &Url) -> Result<(String, OutboundConfig)> {
         reality: None,
     };
 
-    let obfs = if let Some(obfs_pass) = params.get("obfs-password") {
-        Some(Hysteria2Obfs {
-            obfs_type: params
-                .get("obfs")
-                .cloned()
-                .unwrap_or_else(|| "salamander".to_string()),
-            password: obfs_pass.clone(),
-        })
-    } else {
-        None
-    };
+    let obfs = params.get("obfs-password").map(|obfs_pass| Hysteria2Obfs {
+        obfs_type: params
+            .get("obfs")
+            .cloned()
+            .unwrap_or_else(|| "salamander".to_string()),
+        password: obfs_pass.clone(),
+    });
 
     Ok((
         name,

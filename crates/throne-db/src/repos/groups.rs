@@ -101,7 +101,7 @@ impl GroupsRepo {
             "#,
         )?;
 
-        let rows = stmt.query_map([], |row| Self::row_to_group(row))?;
+        let rows = stmt.query_map([], Self::row_to_group)?;
         let mut list = Vec::new();
         for r in rows {
             list.push(r?);

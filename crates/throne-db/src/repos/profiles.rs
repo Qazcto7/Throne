@@ -125,7 +125,7 @@ impl ProfilesRepo {
             "#,
         )?;
 
-        let rows = stmt.query_map([], |row| Self::row_to_profile(row))?;
+        let rows = stmt.query_map([], Self::row_to_profile)?;
         let mut list = Vec::new();
         for r in rows {
             list.push(r?);
@@ -143,7 +143,7 @@ impl ProfilesRepo {
             "#,
         )?;
 
-        let rows = stmt.query_map(params![gid], |row| Self::row_to_profile(row))?;
+        let rows = stmt.query_map(params![gid], Self::row_to_profile)?;
         let mut list = Vec::new();
         for r in rows {
             list.push(r?);

@@ -51,14 +51,16 @@ mod tests {
     #[test]
     fn test_singbox_config_generator() {
         let settings = Settings::default();
-        let mut profile = Profile::default();
-        profile.outbound_json = serde_json::to_string(&OutboundConfig::Vless(protocols::VlessOutbound {
-            server: "server.com".to_string(),
-            server_port: 443,
-            uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+        let profile = Profile {
+            outbound_json: serde_json::to_string(&OutboundConfig::Vless(protocols::VlessOutbound {
+                server: "server.com".to_string(),
+                server_port: 443,
+                uuid: "00000000-0000-0000-0000-000000000000".to_string(),
+                ..Default::default()
+            }))
+            .unwrap(),
             ..Default::default()
-        }))
-        .unwrap();
+        };
 
         let generator = SingBoxGenerator::new(&settings, &profile, None, &[]);
         let config = generator.generate().expect("Generation failed");

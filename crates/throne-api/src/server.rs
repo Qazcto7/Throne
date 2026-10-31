@@ -2,13 +2,22 @@ use crate::crypto::{
     derive_keys, generate_random_bytes, FrameCodec, PROTOCOL_VERSION, RANDOM_SIZE,
 };
 use crate::messages::{ApiRequest, ApiResponse};
+use async_trait::async_trait;
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tracing::{info, warn};
 
+#[async_trait]
 pub trait ApiHandler: Send + Sync + 'static {
-    fn handle(&self, req: ApiRequest) -> ApiResponse;
+    async fn handle(&self, req: ApiRequest) -> ApiResponse;
+}
+
+#[async_trait]
+impl<H: ApiHandler + ?Sized> ApiHandler for Arc<H> {
+    async fn handle(&self, req: ApiRequest) -> ApiResponse {
+        (**self).handle(req).await
+    }
 }
 
 pub struct ApiServer<H: ApiHandler> {
@@ -92,7 +101,7 @@ impl<H: ApiHandler> ApiServer<H> {
                 }
             };
 
-            let resp = handler.handle(req);
+            let resp = handler.handle(req).await;
             let resp_bytes = serde_json::to_vec(&resp)?;
             let sealed_resp = tx_codec.seal(&resp_bytes);
             socket.write_all(&sealed_resp).await?;
