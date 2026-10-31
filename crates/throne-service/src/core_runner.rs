@@ -71,6 +71,18 @@ pub fn resolve_core_bin(custom: Option<&Path>) -> PathBuf {
     PathBuf::from("sing-box")
 }
 
+fn cleanup_tun_stale() {
+    #[cfg(target_os = "linux")]
+    {
+        let _ = std::process::Command::new("nmcli")
+            .args(["connection", "delete", "throne-tun"])
+            .output();
+        let _ = std::process::Command::new("ip")
+            .args(["link", "delete", "throne-tun"])
+            .output();
+    }
+}
+
 pub struct CoreRunner {
     core_path: String,
     child: Arc<Mutex<Option<Child>>>,
@@ -92,6 +104,7 @@ impl CoreRunner {
 
     pub async fn start(&self, config_json: &serde_json::Value) -> anyhow::Result<()> {
         self.stop().await?;
+        cleanup_tun_stale();
 
         let core_bin = resolve_core_bin(Some(Path::new(&self.core_path)));
 
@@ -125,8 +138,15 @@ impl CoreRunner {
             let _ = std::fs::write(&self.pid_file, pid.to_string());
         }
 
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("nmcli")
+                .args(["device", "set", "throne-tun", "managed", "no"])
+                .output();
+        }
+
         // Check if process exited immediately on error
-        tokio::time::sleep(tokio::time::Duration::from_millis(150)).await;
+        tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
         if let Ok(Some(status)) = child.try_wait() {
             let mut err_msg = format!("Core process exited with status {}", status);
             if let Some(mut stderr) = child.stderr.take() {
@@ -156,6 +176,7 @@ impl CoreRunner {
         let _ = cfg_guard.take();
 
         self.clean_stale_process();
+        cleanup_tun_stale();
 
         Ok(())
     }

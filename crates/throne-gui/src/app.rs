@@ -253,14 +253,6 @@ impl ThroneApp {
                 let _ = self.cmd_tx.send(GuiCommand::ToggleSystemProxy(sysproxy_val));
             }
 
-            let mut byedpi_active = self.settings.byedpi_enable;
-            if ui.checkbox(&mut byedpi_active, "ByeDPI (Vodafone)").changed() {
-                let _ = self.cmd_tx.send(GuiCommand::ToggleByeDpi(byedpi_active));
-                if byedpi_active && self.settings.byedpi_preset != "vodafone" {
-                    let _ = self.cmd_tx.send(GuiCommand::SetByeDpiPreset("vodafone".into()));
-                }
-            }
-
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                 ui.add(
                     egui::TextEdit::singleline(&mut self.search_query)

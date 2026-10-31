@@ -78,11 +78,6 @@ pub fn spawn_controller(
                         match command {
                             GuiCommand::Connect(pid) => {
                                 let _ = evt_tx.send(GuiEvent::LogAppended(format!("[CONNECT] Starting connection for profile ID {}...", pid)));
-                                if let Ok(settings) = engine.db.settings.load_settings()
-                                    && (settings.byedpi_enable || settings.byedpi_preset == "vodafone")
-                                {
-                                    let _ = evt_tx.send(GuiEvent::LogAppended("[BYEDPI] ByeDPI (Vodafone DPI circumvention) active on 127.0.0.1:1080".into()));
-                                }
                                 match engine.connect(pid).await {
                                     Ok(_) => {
                                         let _ = evt_tx.send(GuiEvent::LogAppended(format!("[SUCCESS] Connected to profile ID {}", pid)));

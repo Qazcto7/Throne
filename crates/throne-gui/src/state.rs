@@ -6,7 +6,9 @@ pub enum GuiCommand {
     Disconnect,
     ToggleTun(bool),
     ToggleSystemProxy(bool),
+    #[allow(dead_code)]
     ToggleByeDpi(bool),
+    #[allow(dead_code)]
     SetByeDpiPreset(String),
     TestProfile(i64),
     DeleteProfile(i64),
