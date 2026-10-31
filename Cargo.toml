@@ -5,6 +5,7 @@ members = [
     "crates/throne-api",
     "crates/throne-service",
     "crates/throne-cli",
+    "crates/throne-gui",
 ]
 resolver = "2"
 
