@@ -10,8 +10,11 @@ pub struct VlessOutbound {
     pub flow: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub packet_encoding: Option<String>,
+    #[serde(default)]
     pub tls: TlsConfig,
+    #[serde(default)]
     pub transport: TransportConfig,
+    #[serde(default)]
     pub multiplex: MuxConfig,
 }
 

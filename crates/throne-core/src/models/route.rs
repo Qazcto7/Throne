@@ -4,13 +4,25 @@ use serde::{Deserialize, Serialize};
 pub struct RouteProfile {
     pub id: i64,
     pub name: String,
-    pub default_outbound: String, // "proxy", "direct", "block"
+    pub default_outbound_id: i64, // -1: proxy, -2: direct, -3: block
     pub is_raw: bool,
     pub raw_route: String,
     pub dns_json: String,
     pub custom_dns: bool,
     pub created_at: i64,
     pub updated_at: i64,
+}
+
+impl RouteProfile {
+    pub fn default_outbound_tag(&self) -> &'static str {
+        match self.default_outbound_id {
+            -1 => "proxy",
+            -2 => "direct",
+            -3 => "block",
+            -5 => "warp-bypass",
+            _ => "proxy",
+        }
+    }
 }
 
 impl Default for RouteProfile {
@@ -22,7 +34,7 @@ impl Default for RouteProfile {
         Self {
             id: 0,
             name: "Bypass LAN & Direct".to_string(),
-            default_outbound: "proxy".to_string(),
+            default_outbound_id: -1,
             is_raw: false,
             raw_route: String::new(),
             dns_json: String::new(),

@@ -11,6 +11,7 @@ pub struct ShadowsocksOutbound {
     pub plugin: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub plugin_opts: Option<String>,
+    #[serde(default)]
     pub multiplex: MuxConfig,
 }
 

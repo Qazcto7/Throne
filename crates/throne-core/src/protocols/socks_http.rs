@@ -4,11 +4,16 @@ use serde::{Deserialize, Serialize};
 pub struct SocksOutbound {
     pub server: String,
     pub server_port: u16,
+    #[serde(default = "default_socks_version")]
     pub version: String, // "5"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub password: Option<String>,
+}
+
+fn default_socks_version() -> String {
+    "5".to_string()
 }
 
 impl Default for SocksOutbound {

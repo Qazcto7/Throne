@@ -6,8 +6,11 @@ pub struct TrojanOutbound {
     pub server: String,
     pub server_port: u16,
     pub password: String,
+    #[serde(default)]
     pub tls: TlsConfig,
+    #[serde(default)]
     pub transport: TransportConfig,
+    #[serde(default)]
     pub multiplex: MuxConfig,
 }
 

@@ -16,6 +16,7 @@ pub struct Hysteria2Outbound {
     pub auth: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub obfs: Option<Hysteria2Obfs>,
+    #[serde(default)]
     pub tls: TlsConfig,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub up_mbps: Option<u32>,

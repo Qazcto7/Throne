@@ -22,12 +22,12 @@ impl RoutesRepo {
         conn.execute(
             r#"
             INSERT INTO route_profiles (
-                name, default_outbound, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
+                name, default_outbound_id, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
             "#,
             params![
                 rp.name,
-                rp.default_outbound,
+                rp.default_outbound_id,
                 rp.is_raw as i32,
                 rp.raw_route,
                 rp.dns_json,
@@ -44,7 +44,7 @@ impl RoutesRepo {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, name, default_outbound, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
+            SELECT id, name, default_outbound_id, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
             FROM route_profiles WHERE id = ?1
             "#,
         )?;
@@ -56,7 +56,7 @@ impl RoutesRepo {
             Ok(Some(RouteProfile {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                default_outbound: row.get(2)?,
+                default_outbound_id: row.get(2)?,
                 is_raw: is_raw_i != 0,
                 raw_route: row.get(4)?,
                 dns_json: row.get(5)?,
@@ -73,7 +73,7 @@ impl RoutesRepo {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             r#"
-            SELECT id, name, default_outbound, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
+            SELECT id, name, default_outbound_id, is_raw, raw_route, dns_json, custom_dns, created_at, updated_at
             FROM route_profiles ORDER BY id ASC
             "#,
         )?;
@@ -84,7 +84,7 @@ impl RoutesRepo {
             Ok(RouteProfile {
                 id: row.get(0)?,
                 name: row.get(1)?,
-                default_outbound: row.get(2)?,
+                default_outbound_id: row.get(2)?,
                 is_raw: is_raw_i != 0,
                 raw_route: row.get(4)?,
                 dns_json: row.get(5)?,

@@ -399,7 +399,7 @@ impl<'a> SingBoxGenerator<'a> {
 
         let final_outbound = self
             .route_profile
-            .map(|rp| rp.default_outbound.as_str())
+            .map(|rp| rp.default_outbound_tag())
             .unwrap_or("proxy");
 
         Ok(json!({

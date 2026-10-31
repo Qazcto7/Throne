@@ -92,7 +92,7 @@ impl Database {
             CREATE TABLE IF NOT EXISTS route_profiles (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL,
-                default_outbound TEXT NOT NULL DEFAULT 'proxy',
+                default_outbound_id INTEGER NOT NULL DEFAULT -1,
                 is_raw INTEGER NOT NULL DEFAULT 0,
                 raw_route TEXT NOT NULL DEFAULT '',
                 dns_json TEXT NOT NULL DEFAULT '',
@@ -122,7 +122,39 @@ impl Database {
             "#,
         )?;
 
+        // Run migrations for existing databases
+        if !Self::column_exists(&conn, "profiles", "latency_at") {
+            let _ = conn.execute("ALTER TABLE profiles ADD COLUMN latency_at INTEGER NOT NULL DEFAULT 0", []);
+        }
+        if !Self::column_exists(&conn, "profiles", "endpoint_json") {
+            let _ = conn.execute("ALTER TABLE profiles ADD COLUMN endpoint_json TEXT NOT NULL DEFAULT '{}'", []);
+        }
+        if !Self::column_exists(&conn, "route_profiles", "dns_json") {
+            let _ = conn.execute("ALTER TABLE route_profiles ADD COLUMN dns_json TEXT NOT NULL DEFAULT ''", []);
+        }
+        if !Self::column_exists(&conn, "route_profiles", "custom_dns") {
+            let _ = conn.execute("ALTER TABLE route_profiles ADD COLUMN custom_dns INTEGER NOT NULL DEFAULT 0", []);
+        }
+
         Ok(())
+    }
+
+    fn column_exists(conn: &Connection, table: &str, column: &str) -> bool {
+        let pragma_sql = format!("PRAGMA table_info({})", table);
+        let Ok(mut stmt) = conn.prepare(&pragma_sql) else {
+            return false;
+        };
+        let Ok(mut rows) = stmt.query([]) else {
+            return false;
+        };
+        while let Ok(Some(row)) = rows.next() {
+            if let Ok(name) = row.get::<_, String>(1)
+                && name == column
+            {
+                return true;
+            }
+        }
+        false
     }
 
     fn seed_defaults(&self) -> Result<()> {
@@ -141,7 +173,7 @@ impl Database {
         if route_profiles.is_empty() {
             let pid = self.routes.insert_profile(&RouteProfile {
                 name: "Bypass LAN & Private".to_string(),
-                default_outbound: "proxy".to_string(),
+                default_outbound_id: -1,
                 ..Default::default()
             })?;
 
