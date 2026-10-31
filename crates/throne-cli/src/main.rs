@@ -12,6 +12,8 @@ use throne_service::ThroneEngine;
 use tracing::{info, Level};
 use tracing_subscriber::FmtSubscriber;
 
+mod tray;
+
 #[derive(Parser)]
 #[command(name = "throne")]
 #[command(about = "Throne - Cross-platform proxy utility & client (Rust)", long_about = None)]
@@ -22,11 +24,13 @@ struct Cli {
     db: Option<PathBuf>,
 
     #[command(subcommand)]
-    command: Commands,
+    command: Option<Commands>,
 }
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Run System Tray icon (KDE Plasma / taskbar integration)
+    Tray,
     /// Run headless daemon service with remote API
     Daemon {
         /// Port for the Throne Remote API (default: 9095)
@@ -139,6 +143,19 @@ fn get_db_path(custom: Option<PathBuf>) -> PathBuf {
     if let Some(p) = custom {
         return p;
     }
+    // Check if running from a bundle/folder with config/throne.db (e.g. byedpi_throne_linux/Throne)
+    if let Ok(exe) = std::env::current_exe()
+        && let Some(parent) = exe.parent()
+    {
+        let p = parent.join("config").join("throne.db");
+        if p.exists() {
+            return p;
+        }
+    }
+    let local_cfg = PathBuf::from("config/throne.db");
+    if local_cfg.exists() {
+        return local_cfg;
+    }
     let config_dir = dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("throne");
@@ -158,7 +175,12 @@ async fn main() -> Result<()> {
     let db = Database::open(&db_path)
         .with_context(|| format!("Failed to open database at {:?}", db_path))?;
 
-    match cli.command {
+    let command = cli.command.unwrap_or(Commands::Tray);
+
+    match command {
+        Commands::Tray => {
+            tray::run_tray(db).await?;
+        }
         Commands::Daemon { port } => {
             let mut settings = db.settings.load_settings()?;
             if let Some(p) = port {
