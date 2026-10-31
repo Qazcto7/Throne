@@ -1,3 +1,4 @@
+use crate::byedpi_runner::{ByeDpiPreset, ByeDpiRunner};
 use crate::core_runner::CoreRunner;
 use crate::latency::measure_tcp_latency;
 use crate::sub_updater::SubUpdater;
@@ -13,6 +14,7 @@ use tracing::info;
 pub struct ThroneEngine {
     pub db: Arc<Database>,
     pub runner: Arc<CoreRunner>,
+    pub byedpi: Arc<ByeDpiRunner>,
     pub sub_updater: Arc<SubUpdater>,
 }
 
@@ -21,16 +23,27 @@ impl ThroneEngine {
         let db_arc = Arc::new(db);
         let settings = db_arc.settings.load_settings().unwrap_or_default();
         let runner = Arc::new(CoreRunner::new(settings.core_path));
+        let byedpi = Arc::new(ByeDpiRunner::new(settings.byedpi_path));
         let sub_updater = Arc::new(SubUpdater::new(Arc::clone(&db_arc)));
 
         Self {
             db: db_arc,
             runner,
+            byedpi,
             sub_updater,
         }
     }
 
     pub async fn connect(&self, profile_id: i64) -> anyhow::Result<()> {
+        self.connect_with_options(profile_id, None, None).await
+    }
+
+    pub async fn connect_with_options(
+        &self,
+        profile_id: i64,
+        force_byedpi: Option<bool>,
+        byedpi_args: Option<Vec<String>>,
+    ) -> anyhow::Result<()> {
         let profile = self
             .db
             .profiles
@@ -38,6 +51,46 @@ impl ThroneEngine {
             .ok_or_else(|| anyhow::anyhow!("Profile {} not found", profile_id))?;
 
         let mut settings = self.db.settings.load_settings()?;
+
+        // Determine if ByeDPI is needed
+        let needs_byedpi = if let Some(forced) = force_byedpi {
+            forced
+        } else if settings.byedpi_enable {
+            true
+        } else {
+            // Auto-detection:
+            // 1) Outbound targets 127.0.0.1:1080 (ByeDPI SOCKS listener)
+            // 2) Profile name mentions discord / roblox / byedpi
+            let is_local_1080 = profile.outbound_json.contains("127.0.0.1")
+                && (profile.outbound_json.contains("1080") || profile.profile_type == "socks");
+            let name_hint = profile.name.to_lowercase();
+            let matches_hint = name_hint.contains("byedpi")
+                || name_hint.contains("discord")
+                || name_hint.contains("roblox");
+            is_local_1080 || matches_hint
+        };
+
+        if needs_byedpi {
+            info!("Profile requires ByeDPI (DPI circumvention). Starting ByeDPI supervisor...");
+            let args = byedpi_args.unwrap_or_else(|| {
+                if settings.byedpi_preset == "vodafone" || settings.byedpi_preset == "vf" {
+                    ByeDpiPreset::Vodafone.to_args()
+                } else if !settings.byedpi_args.is_empty() {
+                    settings
+                        .byedpi_args
+                        .split_whitespace()
+                        .map(String::from)
+                        .collect()
+                } else {
+                    ByeDpiPreset::Standard.to_args()
+                }
+            });
+
+            if let Err(e) = self.byedpi.start(None, &args).await {
+                tracing::warn!("ByeDPI start warning: {}. Proceeding with core...", e);
+            }
+        }
+
         let route_profile = match settings.active_route_id {
             Some(id) => self.db.routes.get_profile(id)?,
             None => None,
@@ -66,12 +119,16 @@ impl ThroneEngine {
             let _ = SystemProxyManager::enable(&settings.inbound_address, settings.inbound_port);
         }
 
-        info!("Successfully connected to profile: {} ({})", profile.name, profile.id);
+        info!(
+            "Successfully connected to profile: {} ({})",
+            profile.name, profile.id
+        );
         Ok(())
     }
 
     pub async fn disconnect(&self) -> anyhow::Result<()> {
         self.runner.stop().await?;
+        self.byedpi.stop().await?;
 
         let mut settings = self.db.settings.load_settings()?;
         settings.active_profile_id = None;
@@ -85,6 +142,7 @@ impl ThroneEngine {
 
     pub async fn status(&self) -> anyhow::Result<serde_json::Value> {
         let running = self.runner.is_running().await;
+        let byedpi_running = self.byedpi.is_running().await;
         let settings = self.db.settings.load_settings()?;
 
         let active_profile = match settings.active_profile_id {
@@ -94,6 +152,7 @@ impl ThroneEngine {
 
         Ok(json!({
             "running": running,
+            "byedpi_running": byedpi_running,
             "active_profile": active_profile,
             "tun_enabled": settings.enable_tun,
             "system_proxy": settings.system_proxy,
@@ -226,6 +285,29 @@ impl ApiHandler for ThroneEngine {
                     Ok(count) => ApiResponse::success(id, json!({ "imported_nodes": count })),
                     Err(e) => ApiResponse::err(id, e.to_string()),
                 }
+            }
+            "byedpi_start" => {
+                let preset = req
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("preset").and_then(|v| v.as_str()))
+                    .unwrap_or("standard");
+                let preset_obj = ByeDpiPreset::from_str_name(preset);
+                match self.byedpi.start(None, &preset_obj.to_args()).await {
+                    Ok(_) => ApiResponse::success(
+                        id,
+                        json!({ "status": "started", "preset": preset }),
+                    ),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            "byedpi_stop" => match self.byedpi.stop().await {
+                Ok(_) => ApiResponse::success(id, json!({ "status": "stopped" })),
+                Err(e) => ApiResponse::err(id, e.to_string()),
+            },
+            "byedpi_status" => {
+                let running = self.byedpi.is_running().await;
+                ApiResponse::success(id, json!({ "running": running }))
             }
             other => ApiResponse::err(id, format!("Unknown method: {other}")),
         }

@@ -39,8 +39,28 @@ enum Commands {
     Connect {
         /// Profile ID or name
         target: String,
+
+        /// Enable TUN mode for whole-system routing
+        #[arg(short, long)]
+        tun: bool,
+
+        /// Detach into background instead of keeping process in foreground
+        #[arg(short, long)]
+        detach: bool,
+
+        /// Force start ByeDPI (ciadpi)
+        #[arg(long)]
+        byedpi: bool,
+
+        /// Use Vodafone DPI circumvention preset (-s1 -At -d2 -f-1 -r1+s -An)
+        #[arg(long)]
+        vf: bool,
+
+        /// Custom arguments for ByeDPI (ciadpi)
+        #[arg(long)]
+        byedpi_args: Option<String>,
     },
-    /// Disconnect active proxy
+    /// Disconnect active proxy and ByeDPI
     Disconnect,
     /// List all proxy profiles and groups
     List,
@@ -48,6 +68,11 @@ enum Commands {
     Test {
         /// Optional profile ID
         profile_id: Option<i64>,
+    },
+    /// Manage ByeDPI (ciadpi) DPI circumvention daemon directly
+    Byedpi {
+        #[command(subcommand)]
+        cmd: ByeDpiCommands,
     },
     /// Import proxy nodes from a URI, subscription link, or base64
     Import {
@@ -90,6 +115,24 @@ enum SubCommands {
         #[arg(default_value = "1")]
         group_id: i64,
     },
+}
+
+#[derive(Subcommand)]
+enum ByeDpiCommands {
+    /// Start ByeDPI SOCKS proxy on 127.0.0.1:1080
+    Start {
+        /// Preset: standard or vodafone
+        #[arg(short, long, default_value = "standard")]
+        preset: String,
+
+        /// Custom arguments to pass to ciadpi
+        #[arg(short, long)]
+        args: Option<String>,
+    },
+    /// Stop running ByeDPI proxy
+    Stop,
+    /// Check ByeDPI process status
+    Status,
 }
 
 fn get_db_path(custom: Option<PathBuf>) -> PathBuf {
@@ -162,7 +205,14 @@ async fn main() -> Result<()> {
             let status = engine.status().await?;
             println!("{}", serde_json::to_string_pretty(&status)?);
         }
-        Commands::Connect { target } => {
+        Commands::Connect {
+            target,
+            tun,
+            detach,
+            byedpi,
+            vf,
+            byedpi_args,
+        } => {
             let engine = ThroneEngine::new(db.clone());
             let profile_id = if let Ok(id) = target.parse::<i64>() {
                 id
@@ -174,13 +224,90 @@ async fn main() -> Result<()> {
                     .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found", target))?
             };
 
-            engine.connect(profile_id).await?;
-            println!("Connected to profile {}", profile_id);
+            if tun {
+                let mut s = db.settings.load_settings()?;
+                s.enable_tun = true;
+                db.settings.save_settings(&s)?;
+            }
+
+            let force_dpi = if byedpi || vf { Some(true) } else { None };
+            let args = if vf {
+                Some(throne_service::ByeDpiPreset::Vodafone.to_args())
+            } else {
+                byedpi_args.map(|s| s.split_whitespace().map(String::from).collect())
+            };
+
+            engine
+                .connect_with_options(profile_id, force_dpi, args)
+                .await?;
+
+            let status = engine.status().await?;
+            println!("Connected to profile ID: {}", profile_id);
+
+            if status
+                .get("byedpi_running")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                println!("ByeDPI (DPI circumvention) active on 127.0.0.1:1080");
+            }
+
+            if status
+                .get("tun_enabled")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false)
+            {
+                println!("TUN Mode: ENABLED (All system traffic is routed through proxy)");
+            } else {
+                let port = status
+                    .get("inbound_port")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(2080);
+                println!("Proxy Inbound: 127.0.0.1:{}", port);
+            }
+
+            if !detach {
+                println!("\nProxy is RUNNING. Press Ctrl+C to disconnect and restore network settings...");
+                tokio::signal::ctrl_c().await?;
+                println!("\nShutting down proxy & ByeDPI...");
+                engine.disconnect().await?;
+                println!("Disconnected cleanly.");
+            } else {
+                println!("Proxy started in background. Run 'throne disconnect' to stop.");
+            }
         }
         Commands::Disconnect => {
             let engine = ThroneEngine::new(db);
             engine.disconnect().await?;
-            println!("Disconnected");
+            println!("Disconnected and stopped proxy & ByeDPI processes.");
+        }
+        Commands::Byedpi { cmd } => {
+            let engine = ThroneEngine::new(db);
+            match cmd {
+                ByeDpiCommands::Start { preset, args } => {
+                    let p = throne_service::ByeDpiPreset::from_str_name(&preset);
+                    let cmd_args = args
+                        .map(|a| a.split_whitespace().map(String::from).collect())
+                        .unwrap_or_else(|| p.to_args());
+                    engine.byedpi.start(None, &cmd_args).await?;
+                    println!(
+                        "ByeDPI (ciadpi) started on 127.0.0.1:1080 (preset: {})",
+                        preset
+                    );
+                }
+                ByeDpiCommands::Stop => {
+                    engine.byedpi.stop().await?;
+                    println!("ByeDPI stopped.");
+                }
+                ByeDpiCommands::Status => {
+                    let running = engine.byedpi.is_running().await;
+                    if running {
+                        println!("ByeDPI is RUNNING on 127.0.0.1:1080");
+                    } else {
+                        println!("ByeDPI is STOPPED");
+                    }
+                }
+            }
         }
         Commands::List => {
             let groups = db.groups.list_all()?;

@@ -20,6 +20,10 @@ pub struct Settings {
     pub remote_dns: String,
     pub direct_dns: String,
     pub log_level: String,
+    pub byedpi_enable: bool,
+    pub byedpi_path: String,
+    pub byedpi_args: String,
+    pub byedpi_preset: String,
 }
 
 impl Default for Settings {
@@ -43,6 +47,10 @@ impl Default for Settings {
             remote_dns: "tcp://8.8.8.8".to_string(),
             direct_dns: "local".to_string(),
             log_level: "info".to_string(),
+            byedpi_enable: false,
+            byedpi_path: "ciadpi".to_string(),
+            byedpi_args: "-r 1+s".to_string(),
+            byedpi_preset: "standard".to_string(),
         }
     }
 }

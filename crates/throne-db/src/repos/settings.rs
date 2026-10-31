@@ -89,6 +89,18 @@ impl SettingsRepo {
         if let Some(v) = self.get_value("log_level")? {
             s.log_level = v;
         }
+        if let Some(v) = self.get_value("byedpi_enable")? {
+            s.byedpi_enable = v == "true" || v == "1";
+        }
+        if let Some(v) = self.get_value("byedpi_path")? {
+            s.byedpi_path = v;
+        }
+        if let Some(v) = self.get_value("byedpi_args")? {
+            s.byedpi_args = v;
+        }
+        if let Some(v) = self.get_value("byedpi_preset")? {
+            s.byedpi_preset = v;
+        }
 
         Ok(s)
     }
@@ -116,6 +128,10 @@ impl SettingsRepo {
         self.set_value("remote_dns", &s.remote_dns)?;
         self.set_value("direct_dns", &s.direct_dns)?;
         self.set_value("log_level", &s.log_level)?;
+        self.set_value("byedpi_enable", if s.byedpi_enable { "1" } else { "0" })?;
+        self.set_value("byedpi_path", &s.byedpi_path)?;
+        self.set_value("byedpi_args", &s.byedpi_args)?;
+        self.set_value("byedpi_preset", &s.byedpi_preset)?;
         Ok(())
     }
 }

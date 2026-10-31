@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 use tokio::process::{Child, Command};
@@ -8,14 +9,17 @@ pub struct CoreRunner {
     core_path: String,
     child: Arc<Mutex<Option<Child>>>,
     config_file: Arc<Mutex<Option<tempfile::NamedTempFile>>>,
+    pid_file: PathBuf,
 }
 
 impl CoreRunner {
     pub fn new(core_path: String) -> Self {
+        let pid_file = std::env::temp_dir().join("throne-singbox.pid");
         Self {
             core_path,
             child: Arc::new(Mutex::new(None)),
             config_file: Arc::new(Mutex::new(None)),
+            pid_file,
         }
     }
 
@@ -48,6 +52,10 @@ impl CoreRunner {
             }
         };
 
+        if let Some(pid) = child.id() {
+            let _ = std::fs::write(&self.pid_file, pid.to_string());
+        }
+
         *self.child.lock().await = Some(child);
         *self.config_file.lock().await = Some(tmp);
 
@@ -65,15 +73,41 @@ impl CoreRunner {
         let mut cfg_guard = self.config_file.lock().await;
         let _ = cfg_guard.take();
 
+        self.clean_stale_process();
+
         Ok(())
+    }
+
+    fn clean_stale_process(&self) {
+        if let Ok(content) = std::fs::read_to_string(&self.pid_file) {
+            if let Ok(pid) = content.trim().parse::<i32>() {
+                let _ = std::process::Command::new("kill")
+                    .arg("-15")
+                    .arg(pid.to_string())
+                    .status();
+            }
+            let _ = std::fs::remove_file(&self.pid_file);
+        }
     }
 
     pub async fn is_running(&self) -> bool {
         let mut child_guard = self.child.lock().await;
-        if let Some(ref mut child) = *child_guard {
-            matches!(child.try_wait(), Ok(None))
-        } else {
-            false
+        if let Some(ref mut child) = *child_guard
+            && matches!(child.try_wait(), Ok(None))
+        {
+            return true;
         }
+
+        if let Ok(content) = std::fs::read_to_string(&self.pid_file)
+            && let Ok(pid) = content.trim().parse::<i32>()
+            && let Ok(status) = std::process::Command::new("kill")
+                .arg("-0")
+                .arg(pid.to_string())
+                .status()
+        {
+            return status.success();
+        }
+
+        false
     }
 }

@@ -101,18 +101,41 @@ throne test 1
 
 ### 3. Bağlantı Başlatma ve Kesme
 ```bash
-# Profile ID veya ada göre bağlanma
+# Profile ID veya ada göre bağlanma (Varsayılan olarak foreground modda çalışır, Ctrl+C ile güvenle kapatılır)
 throne connect 1
 throne connect "MyNode"
 
-# Bağlantıyı kesme
+# Tüm sistem trafiğini tünellemek için TUN modunda başlatma
+throne connect 1 --tun
+
+# ByeDPI (ciadpi) ile DPI engellemelerini (Discord, Roblox vb.) aşarak bağlanma
+# (Profil 127.0.0.1:1080 SOCKS ise ByeDPI otomatik algılanıp başlatılır!)
+throne connect 1 --vf     # Vodafone / Ağır DPI atlatma profili
+throne connect 1 --detach # Arka planda çalıştırma
+
+# Bağlantıyı kesme (Hem sing-box hem de ByeDPI süreçlerini durdurur)
 throne disconnect
 
 # Durumu kontrol etme
 throne status
 ```
 
-### 4. TUN Modu ve Sistem Vekili
+### 4. ByeDPI (ciadpi) Süreç Yönetimi
+Throne, harici bash betiklerine gerek kalmadan `ciadpi` ikili dosyasını otomatik olarak denetler:
+```bash
+# ByeDPI'ı doğrudan başlatma
+throne byedpi start --preset standard
+throne byedpi start --preset vodafone
+throne byedpi start --args "-s1 -At -d2 -f-1 -r1+s -An"
+
+# ByeDPI durumunu kontrol etme
+throne byedpi status
+
+# ByeDPI'ı durdurma
+throne byedpi stop
+```
+
+### 5. TUN Modu ve Sistem Vekili
 ```bash
 # TUN modunu açma / kapama
 throne tun on
@@ -123,7 +146,7 @@ throne sysproxy on
 throne sysproxy off
 ```
 
-### 5. Headless Daemon ve Uzak API
+### 6. Headless Daemon ve Uzak API
 ```bash
 # Arka plan servisini başlatma (port 9095)
 throne daemon
@@ -133,7 +156,7 @@ throne key
 throne key --regenerate
 ```
 
-### 6. Sing-Box Yapılandırmasını Dışa Aktarma
+### 7. Sing-Box Yapılandırmasını Dışa Aktarma
 ```bash
 throne export-config 1
 ```
