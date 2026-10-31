@@ -6,7 +6,7 @@ pub mod sub_updater;
 pub mod system_proxy;
 
 pub use byedpi_runner::{resolve_ciadpi_bin, ByeDpiPreset, ByeDpiRunner};
-pub use core_runner::CoreRunner;
+pub use core_runner::{resolve_core_bin, CoreRunner};
 pub use engine::ThroneEngine;
 pub use latency::measure_tcp_latency;
 pub use sub_updater::SubUpdater;
@@ -33,5 +33,11 @@ mod tests {
         // In this environment, /home/kazim/byedpi_throne_linux/ciadpi exists
         let bin = resolve_ciadpi_bin(None);
         assert!(bin.is_some(), "Expected to locate ciadpi binary");
+    }
+
+    #[test]
+    fn test_core_bin_resolution() {
+        let bin = resolve_core_bin(None);
+        assert!(bin.exists(), "Expected to locate sing-box binary, found: {:?}", bin);
     }
 }

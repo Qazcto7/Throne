@@ -56,36 +56,67 @@ impl<'a> SingBoxGenerator<'a> {
         let mut servers = Vec::new();
 
         // Remote DNS
-        servers.push(json!({
-            "tag": "dns-remote",
-            "address": self.settings.remote_dns,
-            "detour": "proxy"
-        }));
+        servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, Some("proxy")));
 
         // Direct DNS
-        let direct_addr = if self.settings.direct_dns == "local" {
-            "local"
-        } else {
-            &self.settings.direct_dns
-        };
-        servers.push(json!({
-            "tag": "dns-direct",
-            "address": direct_addr,
-            "detour": "direct"
-        }));
-
-        let mut dns_rules = Vec::new();
-        dns_rules.push(json!({
-            "outbound": "any",
-            "server": "dns-direct"
-        }));
+        servers.push(Self::parse_dns_server("dns-direct", &self.settings.direct_dns, Some("direct")));
 
         Ok(json!({
             "servers": servers,
-            "rules": dns_rules,
             "final": "dns-remote",
             "strategy": "prefer_ipv4"
         }))
+    }
+
+    fn parse_dns_server(tag: &str, addr: &str, detour: Option<&str>) -> Value {
+        let mut obj = Map::new();
+        obj.insert("tag".to_string(), json!(tag));
+        if let Some(d) = detour {
+            obj.insert("detour".to_string(), json!(d));
+        }
+
+        if addr == "local" || addr.is_empty() {
+            obj.insert("type".to_string(), json!("local"));
+        } else if let Some(stripped) = addr.strip_prefix("https://") {
+            obj.insert("type".to_string(), json!("https"));
+            if let Some((host, path)) = stripped.split_once('/') {
+                obj.insert("server".to_string(), json!(host));
+                obj.insert("path".to_string(), json!(format!("/{}", path)));
+            } else {
+                obj.insert("server".to_string(), json!(stripped));
+            }
+        } else if let Some(stripped) = addr.strip_prefix("tls://") {
+            obj.insert("type".to_string(), json!("tls"));
+            let (host, port) = stripped.split_once(':').unwrap_or((stripped, "853"));
+            obj.insert("server".to_string(), json!(host));
+            if let Ok(p) = port.parse::<u16>() {
+                obj.insert("server_port".to_string(), json!(p));
+            }
+        } else if let Some(stripped) = addr.strip_prefix("tcp://") {
+            obj.insert("type".to_string(), json!("tcp"));
+            let (host, port) = stripped.split_once(':').unwrap_or((stripped, "53"));
+            obj.insert("server".to_string(), json!(host));
+            if let Ok(p) = port.parse::<u16>() {
+                obj.insert("server_port".to_string(), json!(p));
+            }
+        } else if let Some(stripped) = addr.strip_prefix("udp://") {
+            obj.insert("type".to_string(), json!("udp"));
+            let (host, port) = stripped.split_once(':').unwrap_or((stripped, "53"));
+            obj.insert("server".to_string(), json!(host));
+            if let Ok(p) = port.parse::<u16>() {
+                obj.insert("server_port".to_string(), json!(p));
+            }
+        } else {
+            // Plain IP or host
+            obj.insert("type".to_string(), json!("udp"));
+            let (host, port) = addr.split_once(':').unwrap_or((addr, "53"));
+            obj.insert("server".to_string(), json!(host));
+            if let Ok(p) = port.parse::<u16>() {
+                obj.insert("server_port".to_string(), json!(p));
+            }
+        }
+
+        Value::Object(obj)
     }
 
     fn build_inbounds(&self) -> Result<Value> {
@@ -96,9 +127,7 @@ impl<'a> SingBoxGenerator<'a> {
             "type": "mixed",
             "tag": "mixed-in",
             "listen": self.settings.inbound_address,
-            "listen_port": self.settings.inbound_port,
-            "sniff": true,
-            "sniff_override_destination": true
+            "listen_port": self.settings.inbound_port
         }));
 
         // TUN inbound if enabled
@@ -107,12 +136,10 @@ impl<'a> SingBoxGenerator<'a> {
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": self.settings.tun_interface_name,
-                "inet4_address": "172.19.0.1/30",
+                "address": ["172.19.0.1/30"],
                 "auto_route": true,
                 "strict_route": self.settings.tun_strict_route,
-                "stack": self.settings.tun_stack,
-                "sniff": true,
-                "sniff_override_destination": true
+                "stack": self.settings.tun_stack
             }));
         }
 
@@ -140,12 +167,6 @@ impl<'a> SingBoxGenerator<'a> {
         outbounds.push(json!({
             "type": "block",
             "tag": "block"
-        }));
-
-        // DNS outbound
-        outbounds.push(json!({
-            "type": "dns",
-            "tag": "dns-out"
         }));
 
         Ok(Value::Array(outbounds))
@@ -352,13 +373,18 @@ impl<'a> SingBoxGenerator<'a> {
     fn build_route(&self) -> Result<Value> {
         let mut rules = Vec::new();
 
-        // 1. Inbound protocol DNS traffic route to dns-out
+        // 1. Sniff inbound connections
         rules.push(json!({
-            "protocol": "dns",
-            "outbound": "dns-out"
+            "action": "sniff"
         }));
 
-        // 2. Private IP ranges bypass
+        // 2. Inbound protocol DNS traffic hijack to internal DNS
+        rules.push(json!({
+            "protocol": "dns",
+            "action": "hijack-dns"
+        }));
+
+        // 3. Private IP ranges bypass
         rules.push(json!({
             "ip_is_private": true,
             "outbound": "direct"
@@ -405,7 +431,8 @@ impl<'a> SingBoxGenerator<'a> {
         Ok(json!({
             "rules": rules,
             "final": final_outbound,
-            "auto_detect_interface": true
+            "auto_detect_interface": true,
+            "default_domain_resolver": "dns-direct"
         }))
     }
 }

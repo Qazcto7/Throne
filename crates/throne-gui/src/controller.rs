@@ -31,8 +31,9 @@ pub fn spawn_controller(
             let _ = evt_tx.send(GuiEvent::LogAppended(
                 "[INIT] ByeDPI (ciadpi) supervisor active (Vodafone DPI bypass available)".into(),
             ));
+            let core_bin = throne_service::resolve_core_bin(None);
             let _ = evt_tx.send(GuiEvent::LogAppended(
-                "[INIT] Sing-box process supervisor ready".into(),
+                format!("[INIT] Sing-box process supervisor ready ({})", core_bin.display()),
             ));
 
             let mut ticker = tokio::time::interval(Duration::from_millis(1000));
