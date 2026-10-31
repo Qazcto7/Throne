@@ -1,0 +1,244 @@
+use crate::core_runner::CoreRunner;
+use crate::latency::measure_tcp_latency;
+use crate::sub_updater::SubUpdater;
+use crate::system_proxy::SystemProxyManager;
+use serde_json::json;
+use std::sync::Arc;
+use throne_api::{ApiHandler, ApiRequest, ApiResponse};
+use throne_core::{OutboundConfig, SingBoxGenerator};
+use throne_db::Database;
+use tracing::info;
+
+pub struct ThroneEngine {
+    pub db: Arc<Database>,
+    pub runner: Arc<CoreRunner>,
+    pub sub_updater: Arc<SubUpdater>,
+}
+
+impl ThroneEngine {
+    pub fn new(db: Database) -> Self {
+        let db_arc = Arc::new(db);
+        let settings = db_arc.settings.load_settings().unwrap_or_default();
+        let runner = Arc::new(CoreRunner::new(settings.core_path));
+        let sub_updater = Arc::new(SubUpdater::new(Arc::clone(&db_arc)));
+
+        Self {
+            db: db_arc,
+            runner,
+            sub_updater,
+        }
+    }
+
+    pub async fn connect(&self, profile_id: i64) -> anyhow::Result<()> {
+        let profile = self
+            .db
+            .profiles
+            .get(profile_id)?
+            .ok_or_else(|| anyhow::anyhow!("Profile {} not found", profile_id))?;
+
+        let mut settings = self.db.settings.load_settings()?;
+        let route_profile = match settings.active_route_id {
+            Some(id) => self.db.routes.get_profile(id)?,
+            None => None,
+        };
+
+        let route_rules = if let Some(ref rp) = route_profile {
+            self.db.routes.list_rules_for_profile(rp.id)?
+        } else {
+            Vec::new()
+        };
+
+        let generator = SingBoxGenerator::new(
+            &settings,
+            &profile,
+            route_profile.as_ref(),
+            &route_rules,
+        );
+        let config_json = generator.generate()?;
+
+        self.runner.start(&config_json).await?;
+
+        settings.active_profile_id = Some(profile_id);
+        self.db.settings.save_settings(&settings)?;
+
+        if settings.system_proxy {
+            let _ = SystemProxyManager::enable(&settings.inbound_address, settings.inbound_port);
+        }
+
+        info!("Successfully connected to profile: {} ({})", profile.name, profile.id);
+        Ok(())
+    }
+
+    pub async fn disconnect(&self) -> anyhow::Result<()> {
+        self.runner.stop().await?;
+
+        let mut settings = self.db.settings.load_settings()?;
+        settings.active_profile_id = None;
+        self.db.settings.save_settings(&settings)?;
+
+        let _ = SystemProxyManager::disable();
+
+        info!("Disconnected successfully");
+        Ok(())
+    }
+
+    pub async fn status(&self) -> anyhow::Result<serde_json::Value> {
+        let running = self.runner.is_running().await;
+        let settings = self.db.settings.load_settings()?;
+
+        let active_profile = match settings.active_profile_id {
+            Some(id) => self.db.profiles.get(id)?,
+            None => None,
+        };
+
+        Ok(json!({
+            "running": running,
+            "active_profile": active_profile,
+            "tun_enabled": settings.enable_tun,
+            "system_proxy": settings.system_proxy,
+            "inbound_port": settings.inbound_port,
+            "inbound_address": settings.inbound_address,
+            "version": "1.4.0 (Rust)"
+        }))
+    }
+
+    pub async fn test_profile(&self, profile_id: i64) -> anyhow::Result<Option<i32>> {
+        let profile = self
+            .db
+            .profiles
+            .get(profile_id)?
+            .ok_or_else(|| anyhow::anyhow!("Profile {} not found", profile_id))?;
+
+        let cfg: OutboundConfig = serde_json::from_str(&profile.outbound_json)?;
+        let (server, port) = cfg.server_and_port();
+
+        let latency = measure_tcp_latency(server, port, 3000).await;
+        if let Some(rtt) = latency {
+            self.db.profiles.update_latency(profile_id, rtt)?;
+        }
+
+        Ok(latency)
+    }
+
+    pub async fn toggle_tun(&self, enable: bool) -> anyhow::Result<()> {
+        let mut settings = self.db.settings.load_settings()?;
+        settings.enable_tun = enable;
+        self.db.settings.save_settings(&settings)?;
+
+        if let Some(active_id) = settings.active_profile_id {
+            self.connect(active_id).await?;
+        }
+        Ok(())
+    }
+
+    pub async fn toggle_system_proxy(&self, enable: bool) -> anyhow::Result<()> {
+        let mut settings = self.db.settings.load_settings()?;
+        settings.system_proxy = enable;
+        self.db.settings.save_settings(&settings)?;
+
+        if enable && self.runner.is_running().await {
+            SystemProxyManager::enable(&settings.inbound_address, settings.inbound_port)?;
+        } else {
+            SystemProxyManager::disable()?;
+        }
+        Ok(())
+    }
+}
+
+impl ApiHandler for ThroneEngine {
+    fn handle(&self, req: ApiRequest) -> ApiResponse {
+        let id = req.id;
+        match req.method.as_str() {
+            "status" => {
+                let rt = tokio::runtime::Handle::current();
+                match tokio::task::block_in_place(|| rt.block_on(self.status())) {
+                    Ok(val) => ApiResponse::success(id, val),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            "connect" => {
+                let pid = req
+                    .params
+                    .and_then(|p| p.get("profile_id").and_then(|v| v.as_i64()));
+                match pid {
+                    Some(profile_id) => {
+                        let rt = tokio::runtime::Handle::current();
+                        match tokio::task::block_in_place(|| rt.block_on(self.connect(profile_id))) {
+                            Ok(_) => ApiResponse::success(id, json!({ "status": "connected" })),
+                            Err(e) => ApiResponse::err(id, e.to_string()),
+                        }
+                    }
+                    None => ApiResponse::err(id, "Missing profile_id param"),
+                }
+            }
+            "disconnect" => {
+                let rt = tokio::runtime::Handle::current();
+                match tokio::task::block_in_place(|| rt.block_on(self.disconnect())) {
+                    Ok(_) => ApiResponse::success(id, json!({ "status": "disconnected" })),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            "profiles" => match self.db.profiles.list_all() {
+                Ok(profiles) => match self.db.groups.list_all() {
+                    Ok(groups) => ApiResponse::success(
+                        id,
+                        json!({
+                            "profiles": profiles,
+                            "groups": groups
+                        }),
+                    ),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                },
+                Err(e) => ApiResponse::err(id, e.to_string()),
+            },
+            "tun" => {
+                let enable = req
+                    .params
+                    .and_then(|p| p.get("enable").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
+                let rt = tokio::runtime::Handle::current();
+                match tokio::task::block_in_place(|| rt.block_on(self.toggle_tun(enable))) {
+                    Ok(_) => ApiResponse::success(id, json!({ "tun": enable })),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            "system_proxy" => {
+                let enable = req
+                    .params
+                    .and_then(|p| p.get("enable").and_then(|v| v.as_bool()))
+                    .unwrap_or(false);
+                let rt = tokio::runtime::Handle::current();
+                match tokio::task::block_in_place(|| rt.block_on(self.toggle_system_proxy(enable))) {
+                    Ok(_) => ApiResponse::success(id, json!({ "system_proxy": enable })),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            "test" => {
+                let pid = req
+                    .params
+                    .and_then(|p| p.get("profile_id").and_then(|v| v.as_i64()));
+                if let Some(profile_id) = pid {
+                    let rt = tokio::runtime::Handle::current();
+                    match tokio::task::block_in_place(|| rt.block_on(self.test_profile(profile_id))) {
+                        Ok(latency) => ApiResponse::success(id, json!({ "latency": latency })),
+                        Err(e) => ApiResponse::err(id, e.to_string()),
+                    }
+                } else {
+                    ApiResponse::err(id, "Missing profile_id param")
+                }
+            }
+            "update_subscription" => {
+                let gid = req
+                    .params
+                    .and_then(|p| p.get("group_id").and_then(|v| v.as_i64()))
+                    .unwrap_or(1);
+                let rt = tokio::runtime::Handle::current();
+                match tokio::task::block_in_place(|| rt.block_on(self.sub_updater.update_group(gid))) {
+                    Ok(count) => ApiResponse::success(id, json!({ "imported_nodes": count })),
+                    Err(e) => ApiResponse::err(id, e.to_string()),
+                }
+            }
+            other => ApiResponse::err(id, format!("Unknown method: {other}")),
+        }
+    }
+}

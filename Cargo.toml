@@ -1,0 +1,46 @@
+[workspace]
+members = [
+    "crates/throne-core",
+    "crates/throne-db",
+    "crates/throne-api",
+    "crates/throne-service",
+    "crates/throne-cli",
+]
+resolver = "2"
+
+[workspace.package]
+version = "1.4.0"
+edition = "2021"
+authors = ["Throne Developers <throne@users.noreply.github.com>", "Qazcto7"]
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Qazcto7/Throne"
+homepage = "https://throneproj.github.io"
+
+[workspace.dependencies]
+throne-core = { path = "crates/throne-core" }
+throne-db = { path = "crates/throne-db" }
+throne-api = { path = "crates/throne-api" }
+throne-service = { path = "crates/throne-service" }
+
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+serde_yaml = "0.9"
+tokio = { version = "1.38", features = ["full"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+chacha20poly1305 = "0.10"
+sha2 = "0.10"
+hmac = "0.12"
+base64 = "0.22"
+url = "2.5"
+uuid = { version = "1.8", features = ["v4"] }
+thiserror = "1.0"
+anyhow = "1.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+rand = "0.8"
+urlencoding = "2.1"
+tempfile = "3.10"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+clap = { version = "4.5", features = ["derive"] }
+dirs = "5.0"
+async-trait = "0.1"

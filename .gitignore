@@ -89,3 +89,6 @@ out
 srslist.h
 .claude
 .qtcreator
+
+# Rust
+/target
