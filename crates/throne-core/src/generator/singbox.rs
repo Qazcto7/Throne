@@ -59,7 +59,7 @@ impl<'a> SingBoxGenerator<'a> {
         servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, Some("proxy")));
 
         // Direct DNS
-        servers.push(Self::parse_dns_server("dns-direct", &self.settings.direct_dns, Some("direct")));
+        servers.push(Self::parse_dns_server("dns-direct", &self.settings.direct_dns, None));
 
         Ok(json!({
             "servers": servers,
@@ -71,7 +71,9 @@ impl<'a> SingBoxGenerator<'a> {
     fn parse_dns_server(tag: &str, addr: &str, detour: Option<&str>) -> Value {
         let mut obj = Map::new();
         obj.insert("tag".to_string(), json!(tag));
-        if let Some(d) = detour {
+        if let Some(d) = detour
+            && d != "direct"
+        {
             obj.insert("detour".to_string(), json!(d));
         }
 
