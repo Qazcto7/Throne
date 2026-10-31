@@ -102,16 +102,17 @@ impl Database {
             );
 
             CREATE TABLE IF NOT EXISTS route_rules (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
                 route_profile_id INTEGER NOT NULL,
                 rule_order INTEGER NOT NULL,
                 name TEXT NOT NULL DEFAULT '',
-                target TEXT NOT NULL DEFAULT 'direct',
-                domains_json TEXT NOT NULL DEFAULT '[]',
-                domain_suffixes_json TEXT NOT NULL DEFAULT '[]',
-                domain_keywords_json TEXT NOT NULL DEFAULT '[]',
-                ip_cidrs_json TEXT NOT NULL DEFAULT '[]',
-                rule_sets_json TEXT NOT NULL DEFAULT '[]',
+                outbound_id INTEGER NOT NULL DEFAULT -2,
+                domain_json TEXT DEFAULT '[]',
+                domain_suffix_json TEXT DEFAULT '[]',
+                domain_keyword_json TEXT DEFAULT '[]',
+                ip_cidr_json TEXT DEFAULT '[]',
+                process_name_json TEXT DEFAULT '[]',
+                rule_set_json TEXT DEFAULT '[]',
+                PRIMARY KEY (route_profile_id, rule_order),
                 FOREIGN KEY(route_profile_id) REFERENCES route_profiles(id) ON DELETE CASCADE
             );
 
@@ -134,6 +135,27 @@ impl Database {
         }
         if !Self::column_exists(&conn, "route_profiles", "custom_dns") {
             let _ = conn.execute("ALTER TABLE route_profiles ADD COLUMN custom_dns INTEGER NOT NULL DEFAULT 0", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "outbound_id") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN outbound_id INTEGER NOT NULL DEFAULT -2", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "domain_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN domain_json TEXT DEFAULT '[]'", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "domain_suffix_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN domain_suffix_json TEXT DEFAULT '[]'", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "domain_keyword_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN domain_keyword_json TEXT DEFAULT '[]'", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "ip_cidr_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN ip_cidr_json TEXT DEFAULT '[]'", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "process_name_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN process_name_json TEXT DEFAULT '[]'", []);
+        }
+        if !Self::column_exists(&conn, "route_rules", "rule_set_json") {
+            let _ = conn.execute("ALTER TABLE route_rules ADD COLUMN rule_set_json TEXT DEFAULT '[]'", []);
         }
 
         Ok(())

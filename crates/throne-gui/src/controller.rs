@@ -132,7 +132,78 @@ pub fn spawn_controller(
                                     settings.active_route_id = Some(rid);
                                     let _ = engine.db.settings.save_settings(&settings);
                                     let _ = evt_tx.send(GuiEvent::LogAppended(format!("[ROUTING] Route profile changed to ID {}", rid)));
-                                    let _ = evt_tx.send(GuiEvent::SettingsUpdated(Box::new(settings)));
+                                    let _ = evt_tx.send(GuiEvent::SettingsUpdated(Box::new(settings.clone())));
+
+                                    if let Some(pid) = settings.active_profile_id
+                                        && engine.runner.is_running().await
+                                    {
+                                        let _ = engine.connect(pid).await;
+                                    }
+                                }
+                                push_all_data(&engine, &evt_tx).await;
+                            }
+                            GuiCommand::LoadRouteRules(rid) => {
+                                if let Ok(rules) = engine.db.routes.list_rules_for_profile(rid) {
+                                    let _ = evt_tx.send(GuiEvent::RouteRulesLoaded(rid, rules));
+                                }
+                            }
+                            GuiCommand::SaveRouteProfile(profile, rules) => {
+                                let pid = profile.id;
+                                let name = profile.name.clone();
+                                let _ = engine.db.routes.update_profile(&profile);
+                                let _ = engine.db.routes.save_rules_for_profile(pid, &rules);
+                                let _ = evt_tx.send(GuiEvent::LogAppended(format!(
+                                    "[ROUTING] Profile '{}' and {} rules saved successfully",
+                                    name,
+                                    rules.len()
+                                )));
+
+                                if let Ok(settings) = engine.db.settings.load_settings()
+                                    && settings.active_route_id == Some(pid)
+                                    && let Some(active_pid) = settings.active_profile_id
+                                    && engine.runner.is_running().await
+                                {
+                                    let _ = engine.connect(active_pid).await;
+                                }
+                                push_all_data(&engine, &evt_tx).await;
+                            }
+                            GuiCommand::CreateRouteProfile(name) => {
+                                let rp = throne_core::RouteProfile {
+                                    id: 0,
+                                    name: name.clone(),
+                                    default_outbound_id: -2,
+                                    ..Default::default()
+                                };
+                                match engine.db.routes.insert_profile(&rp) {
+                                    Ok(id) => {
+                                        let _ = evt_tx.send(GuiEvent::LogAppended(format!(
+                                            "[ROUTING] Route profile '{}' created (ID {})",
+                                            name, id
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let _ = evt_tx.send(GuiEvent::LogAppended(format!(
+                                            "[ERROR] Failed to create route profile: {}",
+                                            e
+                                        )));
+                                    }
+                                }
+                                push_all_data(&engine, &evt_tx).await;
+                            }
+                            GuiCommand::DeleteRouteProfile(rid) => {
+                                match engine.db.routes.delete_profile(rid) {
+                                    Ok(_) => {
+                                        let _ = evt_tx.send(GuiEvent::LogAppended(format!(
+                                            "[ROUTING] Route profile ID {} deleted",
+                                            rid
+                                        )));
+                                    }
+                                    Err(e) => {
+                                        let _ = evt_tx.send(GuiEvent::LogAppended(format!(
+                                            "[ERROR] Failed to delete route profile: {}",
+                                            e
+                                        )));
+                                    }
                                 }
                                 push_all_data(&engine, &evt_tx).await;
                             }

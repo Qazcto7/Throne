@@ -101,24 +101,50 @@ impl<'a> SingBoxGenerator<'a> {
                     .or_insert_with(|| vec![ip.to_string()]);
             }
 
+            for (domain, ips) in &predefined_map {
+                if !domain.starts_with('*') {
+                    let answers: Vec<String> = ips.iter().map(|ip| format!("*. IN A {}", ip)).collect();
+                    rules.push(json!({
+                        "domain": [domain],
+                        "action": "predefined",
+                        "rcode": "NOERROR",
+                        "answer": answers
+                    }));
+                }
+            }
+
+            // Suffix rules for wildcard domain families so subdomains never hit poisoned DNS
+            rules.push(json!({
+                "domain_suffix": [
+                    "discord.com",
+                    "discordapp.com",
+                    "discord.gg",
+                    "discordapp.net",
+                    "discordcdn.com",
+                    "discord.media"
+                ],
+                "action": "predefined",
+                "rcode": "NOERROR",
+                "answer": ["*. IN A 162.159.136.232"]
+            }));
+
+            rules.push(json!({
+                "domain_suffix": [
+                    "roblox.com",
+                    "rbxcdn.com",
+                    "rbxinfra.com",
+                    "robloxlabs.com"
+                ],
+                "action": "predefined",
+                "rcode": "NOERROR",
+                "answer": ["*. IN A 128.116.44.3"]
+            }));
+
             if !predefined_map.is_empty() {
                 servers.push(json!({
                     "tag": "dns-hosts",
                     "type": "hosts",
                     "predefined": predefined_map
-                }));
-
-                rules.push(json!({
-                    "domain_suffix": [
-                        "discord.com",
-                        "discordapp.com",
-                        "discord.gg",
-                        "discordapp.net",
-                        "discordcdn.com",
-                        "discord.media",
-                        "roblox.com"
-                    ],
-                    "server": "dns-hosts"
                 }));
             }
         }

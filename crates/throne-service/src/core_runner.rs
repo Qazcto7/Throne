@@ -74,12 +74,25 @@ pub fn resolve_core_bin(custom: Option<&Path>) -> PathBuf {
 fn cleanup_tun_stale() {
     #[cfg(target_os = "linux")]
     {
-        let _ = std::process::Command::new("nmcli")
-            .args(["connection", "delete", "throne-tun"])
-            .output();
-        let _ = std::process::Command::new("ip")
-            .args(["link", "delete", "throne-tun"])
-            .output();
+        let _ = std::process::Command::new("pkill")
+            .args(["-15", "-f", "sing-box"])
+            .status();
+
+        // Wait up to 1000ms for throne-tun device to disappear from kernel
+        for _ in 0..20 {
+            let status = std::process::Command::new("ip")
+                .args(["link", "show", "throne-tun"])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+            if let Ok(st) = status
+                && !st.success()
+            {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
     }
 }
 
@@ -138,16 +151,6 @@ impl CoreRunner {
             let _ = std::fs::write(&self.pid_file, pid.to_string());
         }
 
-        #[cfg(target_os = "linux")]
-        {
-            let _ = std::process::Command::new("nmcli")
-                .args(["device", "set", "throne-tun", "managed", "no"])
-                .output();
-            let _ = std::process::Command::new("resolvectl")
-                .arg("flush-caches")
-                .output();
-        }
-
         // Check if process exited immediately on error
         tokio::time::sleep(tokio::time::Duration::from_millis(350)).await;
         if let Ok(Some(status)) = child.try_wait() {
@@ -199,9 +202,9 @@ impl CoreRunner {
                     .status();
             }
 
-            // Wait up to 1200ms for graceful exit so sing-box removes TUN routes
+            // Wait up to 1500ms for graceful exit so sing-box removes TUN routes & closes fd
             let mut exited = false;
-            for _ in 0..12 {
+            for _ in 0..15 {
                 if let Ok(Some(_)) = child.try_wait() {
                     exited = true;
                     break;
@@ -234,6 +237,9 @@ impl CoreRunner {
             }
             let _ = std::fs::remove_file(&self.pid_file);
         }
+        let _ = std::process::Command::new("pkill")
+            .args(["-15", "-f", "sing-box"])
+            .status();
     }
 
     pub async fn is_running(&self) -> bool {

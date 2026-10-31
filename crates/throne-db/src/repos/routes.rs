@@ -101,30 +101,124 @@ impl RoutesRepo {
         Ok(list)
     }
 
+    pub fn update_profile(&self, rp: &RouteProfile) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs() as i64;
+
+        conn.execute(
+            r#"
+            UPDATE route_profiles
+            SET name = ?1, default_outbound_id = ?2, is_raw = ?3, raw_route = ?4,
+                dns_json = ?5, custom_dns = ?6, updated_at = ?7
+            WHERE id = ?8
+            "#,
+            params![
+                rp.name,
+                rp.default_outbound_id,
+                rp.is_raw as i32,
+                rp.raw_route,
+                rp.dns_json,
+                rp.custom_dns as i32,
+                now,
+                rp.id
+            ],
+        )?;
+
+        Ok(())
+    }
+
+    pub fn delete_profile(&self, id: i64) -> Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM route_rules WHERE route_profile_id = ?1", params![id])?;
+        conn.execute("DELETE FROM route_profiles WHERE id = ?1", params![id])?;
+        Ok(())
+    }
+
+    pub fn save_rules_for_profile(&self, profile_id: i64, rules: &[RouteRule]) -> Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+
+        tx.execute("DELETE FROM route_rules WHERE route_profile_id = ?1", params![profile_id])?;
+
+        for (order, r) in rules.iter().enumerate() {
+            let domains_json = serde_json::to_string(&r.domains)?;
+            let suffixes_json = serde_json::to_string(&r.domain_suffixes)?;
+            let keywords_json = serde_json::to_string(&r.domain_keywords)?;
+            let ip_json = serde_json::to_string(&r.ip_cidrs)?;
+            let process_json = serde_json::to_string(&r.process_names)?;
+            let rule_sets_json = serde_json::to_string(&r.rule_sets)?;
+
+            let outbound_id = match r.target.as_str() {
+                "proxy" => -1,
+                "direct" => -2,
+                "block" => -3,
+                _ => -2,
+            };
+
+            tx.execute(
+                r#"
+                INSERT INTO route_rules (
+                    route_profile_id, rule_order, name, outbound_id,
+                    domain_json, domain_suffix_json, domain_keyword_json,
+                    ip_cidr_json, process_name_json, rule_set_json
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+                "#,
+                params![
+                    profile_id,
+                    order as i32,
+                    r.name,
+                    outbound_id,
+                    domains_json,
+                    suffixes_json,
+                    keywords_json,
+                    ip_json,
+                    process_json,
+                    rule_sets_json
+                ],
+            )?;
+        }
+
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn insert_rule(&self, r: &RouteRule) -> Result<i64> {
         let conn = self.conn.lock().unwrap();
         let domains_json = serde_json::to_string(&r.domains)?;
         let suffixes_json = serde_json::to_string(&r.domain_suffixes)?;
         let keywords_json = serde_json::to_string(&r.domain_keywords)?;
         let ip_json = serde_json::to_string(&r.ip_cidrs)?;
+        let process_json = serde_json::to_string(&r.process_names)?;
         let rule_sets_json = serde_json::to_string(&r.rule_sets)?;
+
+        let outbound_id = match r.target.as_str() {
+            "proxy" => -1,
+            "direct" => -2,
+            "block" => -3,
+            _ => -2,
+        };
 
         conn.execute(
             r#"
             INSERT INTO route_rules (
-                route_profile_id, rule_order, name, target,
-                domains_json, domain_suffixes_json, domain_keywords_json, ip_cidrs_json, rule_sets_json
-            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                route_profile_id, rule_order, name, outbound_id,
+                domain_json, domain_suffix_json, domain_keyword_json,
+                ip_cidr_json, process_name_json, rule_set_json
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
             "#,
             params![
                 r.route_profile_id,
                 r.rule_order,
                 r.name,
-                r.target,
+                outbound_id,
                 domains_json,
                 suffixes_json,
                 keywords_json,
                 ip_json,
+                process_json,
                 rule_sets_json
             ],
         )?;

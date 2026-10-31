@@ -5,7 +5,7 @@ use egui_plot::{Legend, Line, Plot, PlotPoints};
 use std::collections::VecDeque;
 use std::sync::mpsc::Receiver;
 use std::time::Duration;
-use throne_core::{Group, OutboundConfig, Profile, RouteProfile, Settings};
+use throne_core::{Group, OutboundConfig, Profile, RouteProfile, RouteRule, Settings};
 use tokio::sync::mpsc::UnboundedSender;
 
 #[derive(PartialEq, Clone, Copy)]
@@ -48,6 +48,21 @@ pub struct ThroneApp {
     show_import_dialog: bool,
     import_input_text: String,
     search_query: String,
+
+    // Routing Dialog State
+    show_routing_dialog: bool,
+    routing_selected_profile_id: Option<i64>,
+    editing_route_profile: Option<RouteProfile>,
+    editing_route_rules: Vec<RouteRule>,
+    show_rule_editor: bool,
+    editing_rule_index: Option<usize>,
+    rule_draft: RouteRule,
+    rule_domains_text: String,
+    rule_suffixes_text: String,
+    rule_processes_text: String,
+    rule_cidrs_text: String,
+    show_new_profile_modal: bool,
+    new_profile_name: String,
 
     // Predefined rules multiline buffer for DNS settings editor
     dns_predefined_text: String,
@@ -99,6 +114,19 @@ impl ThroneApp {
             show_import_dialog: false,
             import_input_text: String::new(),
             search_query: String::new(),
+            show_routing_dialog: false,
+            routing_selected_profile_id: None,
+            editing_route_profile: None,
+            editing_route_rules: Vec::new(),
+            show_rule_editor: false,
+            editing_rule_index: None,
+            rule_draft: RouteRule::default(),
+            rule_domains_text: String::new(),
+            rule_suffixes_text: String::new(),
+            rule_processes_text: String::new(),
+            rule_cidrs_text: String::new(),
+            show_new_profile_modal: false,
+            new_profile_name: String::new(),
             dns_predefined_text,
             up_speed_history: VecDeque::new(),
             down_speed_history: VecDeque::new(),
@@ -136,6 +164,24 @@ impl ThroneApp {
                 }
                 GuiEvent::RoutesUpdated(rts) => {
                     self.routes = rts;
+                    if self.routing_selected_profile_id.is_none() && !self.routes.is_empty() {
+                        let active_rid = self.settings.active_route_id.unwrap_or(self.routes[0].id);
+                        let target_profile = self
+                            .routes
+                            .iter()
+                            .find(|r| r.id == active_rid)
+                            .cloned()
+                            .unwrap_or_else(|| self.routes[0].clone());
+                        let target_id = target_profile.id;
+                        self.routing_selected_profile_id = Some(target_id);
+                        self.editing_route_profile = Some(target_profile);
+                        let _ = self.cmd_tx.send(GuiCommand::LoadRouteRules(target_id));
+                    }
+                }
+                GuiEvent::RouteRulesLoaded(rid, rules) => {
+                    if self.routing_selected_profile_id == Some(rid) {
+                        self.editing_route_rules = rules;
+                    }
                 }
                 GuiEvent::SettingsUpdated(st) => {
                     self.settings = *st;
@@ -297,6 +343,10 @@ impl ThroneApp {
                     self.show_settings_dialog = true;
                     ui.close_menu();
                 }
+                if ui.button("🔀 Yönlendirme Ayarları (Routing)...").clicked() {
+                    self.show_routing_dialog = true;
+                    ui.close_menu();
+                }
                 ui.separator();
                 if ui.button("📁 Yapılandırma Klasörünü Aç").clicked() {
                     let _ = std::process::Command::new("xdg-open")
@@ -338,6 +388,11 @@ impl ThroneApp {
                 if self.routes.is_empty() {
                     ui.label("• Default");
                     ui.label("• Roblox ve Discord");
+                }
+                ui.separator();
+                if ui.button("⚙ Yönlendirme Ayarları (Routing Settings)...").clicked() {
+                    self.show_routing_dialog = true;
+                    ui.close_menu();
                 }
             });
 
@@ -960,6 +1015,11 @@ impl ThroneApp {
                             });
 
                             ui.add_space(8.0);
+                            if ui.button("⚙ Yönlendirme Yöneticisini Aç (Open Route Manager)...").clicked() {
+                                self.show_routing_dialog = true;
+                            }
+
+                            ui.add_space(8.0);
                             ui.label("Dahili Kurallar:");
                             ui.label("• ciadpi (ByeDPI) -> Direct (Döngü koruması)");
                             ui.label("• Port 53 / Protocol DNS -> Hijack-DNS (Şifreli DoH)");
@@ -1040,6 +1100,354 @@ impl ThroneApp {
             self.show_settings_dialog = false;
         }
     }
+
+    fn render_routing_dialog(&mut self, ctx: &egui::Context) {
+        if !self.show_routing_dialog {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("⚙ Yönlendirme ve Kural Yöneticisi (Routing Settings)")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(true)
+            .default_size(vec2(860.0, 560.0))
+            .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    // Left column: Profile selector and management
+                    ui.vertical(|ui| {
+                        ui.set_width(220.0);
+                        ui.heading("Profiller");
+                        ui.add_space(4.0);
+
+                        ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
+                            let active_id = self.settings.active_route_id.unwrap_or(1);
+                            for p in &self.routes {
+                                let is_selected = self.routing_selected_profile_id == Some(p.id);
+                                let is_active = p.id == active_id;
+                                let title = if is_active {
+                                    format!("★ {} (Aktif)", p.name)
+                                } else {
+                                    p.name.clone()
+                                };
+
+                                let resp = ui.selectable_label(is_selected, title);
+                                if resp.clicked() {
+                                    self.routing_selected_profile_id = Some(p.id);
+                                    self.editing_route_profile = Some(p.clone());
+                                    let _ = self.cmd_tx.send(GuiCommand::LoadRouteRules(p.id));
+                                }
+                            }
+                        });
+
+                        ui.add_space(8.0);
+                        ui.horizontal(|ui| {
+                            if ui.button("➕ Yeni").clicked() {
+                                self.new_profile_name = "Yeni Profil".into();
+                                self.show_new_profile_modal = true;
+                            }
+                            if ui.button("📋 Klonla").clicked()
+                                && let Some(ref cur) = self.editing_route_profile
+                            {
+                                let clone_name = format!("{} (Kopya)", cur.name);
+                                let _ = self.cmd_tx.send(GuiCommand::CreateRouteProfile(clone_name));
+                            }
+                            if self.routes.len() > 1
+                                && ui.button("🗑️ Sil").clicked()
+                                && let Some(id) = self.routing_selected_profile_id
+                            {
+                                let _ = self.cmd_tx.send(GuiCommand::DeleteRouteProfile(id));
+                                self.routing_selected_profile_id = None;
+                                self.editing_route_profile = None;
+                                self.editing_route_rules.clear();
+                            }
+                        });
+                    });
+
+                    ui.separator();
+
+                    // Right column: Selected Profile Editor & Rules Table
+                    ui.vertical(|ui| {
+                        if let Some(ref mut prof) = self.editing_route_profile {
+                            ui.horizontal(|ui| {
+                                ui.label("Profil Adı:");
+                                ui.text_edit_singleline(&mut prof.name);
+
+                                ui.label("Varsayılan Çıkış:");
+                                egui::ComboBox::from_id_salt("default_outbound_combo")
+                                    .selected_text(match prof.default_outbound_id {
+                                        -1 => "Proxy (ByeDPI)",
+                                        -2 => "Direct (Bypass)",
+                                        -3 => "Block (Engelle)",
+                                        _ => "Direct (Bypass)",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        ui.selectable_value(&mut prof.default_outbound_id, -1, "Proxy (ByeDPI)");
+                                        ui.selectable_value(&mut prof.default_outbound_id, -2, "Direct (Bypass)");
+                                        ui.selectable_value(&mut prof.default_outbound_id, -3, "Block (Engelle)");
+                                    });
+
+                                let is_active = self.settings.active_route_id == Some(prof.id);
+                                if !is_active {
+                                    if ui.button("★ Bu Profili Aktif Yap").clicked() {
+                                        let _ = self.cmd_tx.send(GuiCommand::SetRouteProfile(prof.id));
+                                    }
+                                } else {
+                                    ui.colored_label(Color32::from_rgb(76, 175, 80), "✓ Aktif Profil");
+                                }
+                            });
+
+                            ui.separator();
+
+                            ui.horizontal(|ui| {
+                                ui.heading(format!("Kurallar ({})", self.editing_route_rules.len()));
+                                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                                    if ui.button("➕ Kural Ekle").clicked() {
+                                        self.editing_rule_index = None;
+                                        self.rule_draft = RouteRule {
+                                            name: "Yeni Kural".into(),
+                                            target: "proxy".into(),
+                                            ..Default::default()
+                                        };
+                                        self.rule_domains_text.clear();
+                                        self.rule_suffixes_text.clear();
+                                        self.rule_processes_text.clear();
+                                        self.rule_cidrs_text.clear();
+                                        self.show_rule_editor = true;
+                                    }
+                                });
+                            });
+
+                            ui.add_space(4.0);
+
+                            ScrollArea::vertical().max_height(340.0).show(ui, |ui| {
+                                let mut to_delete = None;
+                                let mut to_move_up = None;
+                                let mut to_move_down = None;
+                                let mut to_edit = None;
+
+                                egui::Grid::new("rules_table_grid")
+                                    .striped(true)
+                                    .num_columns(5)
+                                    .spacing([12.0, 8.0])
+                                    .show(ui, |ui| {
+                                        ui.strong("#");
+                                        ui.strong("Kural Adı");
+                                        ui.strong("Çıkış");
+                                        ui.strong("Hedefler / Koşullar");
+                                        ui.strong("İşlemler");
+                                        ui.end_row();
+
+                                        for (idx, r) in self.editing_route_rules.iter().enumerate() {
+                                            ui.label(format!("{}", idx + 1));
+                                            ui.label(&r.name);
+
+                                            let target_text = match r.target.as_str() {
+                                                "proxy" => RichText::new("Proxy").color(Color32::from_rgb(100, 180, 255)),
+                                                "direct" => RichText::new("Direct").color(Color32::from_rgb(120, 220, 120)),
+                                                "block" => RichText::new("Block").color(Color32::from_rgb(255, 100, 100)),
+                                                _ => RichText::new(&r.target),
+                                            };
+                                            ui.label(target_text);
+
+                                            // Conditions summary
+                                            let mut conditions = Vec::new();
+                                            if !r.domain_suffixes.is_empty() {
+                                                conditions.push(format!("Alan: {}", r.domain_suffixes.join(", ")));
+                                            }
+                                            if !r.domains.is_empty() {
+                                                conditions.push(format!("Tam Alan: {}", r.domains.join(", ")));
+                                            }
+                                            if !r.process_names.is_empty() {
+                                                conditions.push(format!("İşlem: {}", r.process_names.join(", ")));
+                                            }
+                                            if !r.ip_cidrs.is_empty() {
+                                                conditions.push(format!("IP: {}", r.ip_cidrs.join(", ")));
+                                            }
+                                            let cond_str = if conditions.is_empty() {
+                                                "(Tüm Trafik)".to_string()
+                                            } else {
+                                                conditions.join(" | ")
+                                            };
+                                            ui.label(cond_str);
+
+                                            ui.horizontal(|ui| {
+                                                if ui.small_button("✏").clicked() {
+                                                    to_edit = Some(idx);
+                                                }
+                                                if idx > 0 && ui.small_button("⬆").clicked() {
+                                                    to_move_up = Some(idx);
+                                                }
+                                                if idx + 1 < self.editing_route_rules.len() && ui.small_button("⬇").clicked() {
+                                                    to_move_down = Some(idx);
+                                                }
+                                                if ui.small_button("🗑").clicked() {
+                                                    to_delete = Some(idx);
+                                                }
+                                            });
+                                            ui.end_row();
+                                        }
+                                    });
+
+                                if let Some(idx) = to_edit {
+                                    let r = &self.editing_route_rules[idx];
+                                    self.editing_rule_index = Some(idx);
+                                    self.rule_draft = r.clone();
+                                    self.rule_domains_text = r.domains.join("\n");
+                                    self.rule_suffixes_text = r.domain_suffixes.join("\n");
+                                    self.rule_processes_text = r.process_names.join("\n");
+                                    self.rule_cidrs_text = r.ip_cidrs.join("\n");
+                                    self.show_rule_editor = true;
+                                }
+                                if let Some(idx) = to_move_up {
+                                    self.editing_route_rules.swap(idx, idx - 1);
+                                }
+                                if let Some(idx) = to_move_down {
+                                    self.editing_route_rules.swap(idx, idx + 1);
+                                }
+                                if let Some(idx) = to_delete {
+                                    self.editing_route_rules.remove(idx);
+                                }
+                            });
+
+                            ui.separator();
+
+                            ui.horizontal(|ui| {
+                                if ui.button("💾 Değişiklikleri Kaydet & Uygula").clicked() {
+                                    let prof_clone = prof.clone();
+                                    let rules_clone = self.editing_route_rules.clone();
+                                    let _ = self.cmd_tx.send(GuiCommand::SaveRouteProfile(prof_clone, rules_clone));
+                                }
+                                if ui.button("Kapat").clicked() {
+                                    self.show_routing_dialog = false;
+                                }
+                            });
+                        } else {
+                            ui.label("Düzenlemek için soldaki listeden bir profil seçin.");
+                        }
+                    });
+                });
+            });
+
+        if !open {
+            self.show_routing_dialog = false;
+        }
+    }
+
+    fn render_rule_editor_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_rule_editor {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("Kural Düzenle (Edit Rule)")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .default_size(vec2(520.0, 440.0))
+            .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Kural Adı:");
+                    ui.text_edit_singleline(&mut self.rule_draft.name);
+
+                    ui.label("Çıkış (Outbound):");
+                    egui::ComboBox::from_id_salt("draft_outbound")
+                        .selected_text(match self.rule_draft.target.as_str() {
+                            "proxy" => "Proxy (ByeDPI)",
+                            "direct" => "Direct (Bypass)",
+                            "block" => "Block (Engelle)",
+                            _ => &self.rule_draft.target,
+                        })
+                        .show_ui(ui, |ui| {
+                            ui.selectable_value(&mut self.rule_draft.target, "proxy".into(), "Proxy (ByeDPI)");
+                            ui.selectable_value(&mut self.rule_draft.target, "direct".into(), "Direct (Bypass)");
+                            ui.selectable_value(&mut self.rule_draft.target, "block".into(), "Block (Engelle)");
+                        });
+                });
+
+                ui.separator();
+
+                ui.label("Alan Adı Sonekleri (Domain Suffix - virgülle veya satır satır ayırın):");
+                ui.add(egui::TextEdit::multiline(&mut self.rule_suffixes_text).desired_rows(3).desired_width(480.0));
+
+                ui.label("İşlem Adları (Process Name - örn: Discord, updater_bootstrap, sober):");
+                ui.add(egui::TextEdit::multiline(&mut self.rule_processes_text).desired_rows(3).desired_width(480.0));
+
+                ui.label("IP CIDR Aralıkları (örn: 1.1.1.1/32, 192.168.0.0/16):");
+                ui.add(egui::TextEdit::multiline(&mut self.rule_cidrs_text).desired_rows(2).desired_width(480.0));
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("✓ Tamam").clicked() {
+                        let parse_lines = |text: &str| -> Vec<String> {
+                            text.lines()
+                                .flat_map(|l| l.split(','))
+                                .map(|s| s.trim().to_string())
+                                .filter(|s| !s.is_empty())
+                                .collect()
+                        };
+
+                        self.rule_draft.domain_suffixes = parse_lines(&self.rule_suffixes_text);
+                        self.rule_draft.process_names = parse_lines(&self.rule_processes_text);
+                        self.rule_draft.ip_cidrs = parse_lines(&self.rule_cidrs_text);
+
+                        if let Some(idx) = self.editing_rule_index {
+                            if idx < self.editing_route_rules.len() {
+                                self.editing_route_rules[idx] = self.rule_draft.clone();
+                            }
+                        } else {
+                            self.editing_route_rules.push(self.rule_draft.clone());
+                        }
+
+                        self.show_rule_editor = false;
+                    }
+                    if ui.button("İptal").clicked() {
+                        self.show_rule_editor = false;
+                    }
+                });
+            });
+
+        if !open {
+            self.show_rule_editor = false;
+        }
+    }
+
+    fn render_new_profile_modal(&mut self, ctx: &egui::Context) {
+        if !self.show_new_profile_modal {
+            return;
+        }
+
+        let mut open = true;
+        egui::Window::new("Yeni Yönlendirme Profili")
+            .open(&mut open)
+            .collapsible(false)
+            .resizable(false)
+            .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
+            .show(ctx, |ui| {
+                ui.label("Profil Adı:");
+                ui.text_edit_singleline(&mut self.new_profile_name);
+
+                ui.add_space(8.0);
+                ui.horizontal(|ui| {
+                    if ui.button("Oluştur").clicked() {
+                        let name = self.new_profile_name.trim().to_string();
+                        if !name.is_empty() {
+                            let _ = self.cmd_tx.send(GuiCommand::CreateRouteProfile(name));
+                            self.show_new_profile_modal = false;
+                        }
+                    }
+                    if ui.button("İptal").clicked() {
+                        self.show_new_profile_modal = false;
+                    }
+                });
+            });
+
+        if !open {
+            self.show_new_profile_modal = false;
+        }
+    }
 }
 
 impl eframe::App for ThroneApp {
@@ -1082,6 +1490,9 @@ impl eframe::App for ThroneApp {
         // Dialogs
         self.render_import_dialog(ctx);
         self.render_settings_dialog(ctx);
+        self.render_routing_dialog(ctx);
+        self.render_rule_editor_modal(ctx);
+        self.render_new_profile_modal(ctx);
 
         // Keep UI reactive
         ctx.request_repaint_after(Duration::from_millis(500));
