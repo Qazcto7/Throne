@@ -57,9 +57,12 @@ impl Default for Settings {
             dns_predefined_rules: vec![
                 "127.0.0.1 localhost".to_string(),
                 "162.159.136.232 discord.com".to_string(),
+                "162.159.137.232 updates.discord.com".to_string(),
                 "162.159.134.234 gateway.discord.gg".to_string(),
                 "162.159.134.233 cdn.discordapp.com".to_string(),
                 "162.159.129.233 discordapp.com".to_string(),
+                "162.159.128.233 status.discord.com".to_string(),
+                "162.159.135.232 discord.gg".to_string(),
                 "128.116.44.3 roblox.com".to_string(),
                 "128.116.44.3 www.roblox.com".to_string(),
             ],

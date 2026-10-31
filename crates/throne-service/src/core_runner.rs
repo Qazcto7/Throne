@@ -143,6 +143,9 @@ impl CoreRunner {
             let _ = std::process::Command::new("nmcli")
                 .args(["device", "set", "throne-tun", "managed", "no"])
                 .output();
+            let _ = std::process::Command::new("resolvectl")
+                .arg("flush-caches")
+                .output();
         }
 
         // Check if process exited immediately on error
@@ -156,6 +159,26 @@ impl CoreRunner {
                 }
             }
             anyhow::bail!("{}", err_msg);
+        }
+
+        // Drain stdout and stderr in background tasks to prevent pipe buffer deadlock
+        if let Some(stdout) = child.stdout.take() {
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stdout).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::debug!(target: "singbox", "{}", line);
+                }
+            });
+        }
+        if let Some(stderr) = child.stderr.take() {
+            tokio::spawn(async move {
+                use tokio::io::{AsyncBufReadExt, BufReader};
+                let mut reader = BufReader::new(stderr).lines();
+                while let Ok(Some(line)) = reader.next_line().await {
+                    tracing::warn!(target: "singbox", "{}", line);
+                }
+            });
         }
 
         *self.child.lock().await = Some(child);

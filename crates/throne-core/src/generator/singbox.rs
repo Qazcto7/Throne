@@ -57,10 +57,9 @@ impl<'a> SingBoxGenerator<'a> {
         let mut rules = Vec::new();
 
         // 1. Predefined hosts for DPI/DNS bypass (e.g. Discord, Roblox)
-        if self.settings.dns_predefined_enable && !self.settings.dns_predefined_rules.is_empty() {
+        if self.settings.dns_predefined_enable {
             let mut predefined_map: std::collections::BTreeMap<String, Vec<String>> =
                 std::collections::BTreeMap::new();
-            let mut domain_list = Vec::new();
 
             for rule in &self.settings.dns_predefined_rules {
                 let trimmed = rule.trim();
@@ -76,8 +75,30 @@ impl<'a> SingBoxGenerator<'a> {
                         .entry(domain.to_string())
                         .or_default()
                         .push(ip.to_string());
-                    domain_list.push(domain.to_string());
                 }
+            }
+
+            // Ensure essential Discord and Roblox predefined wildcard/subdomain mappings
+            let defaults = [
+                ("discord.com", "162.159.136.232"),
+                ("updates.discord.com", "162.159.137.232"),
+                ("gateway.discord.gg", "162.159.134.234"),
+                ("cdn.discordapp.com", "162.159.134.233"),
+                ("discordapp.com", "162.159.129.233"),
+                ("status.discord.com", "162.159.128.233"),
+                ("discord.gg", "162.159.135.232"),
+                ("*.discord.com", "162.159.136.232"),
+                ("*.discordapp.com", "162.159.134.233"),
+                ("*.discord.gg", "162.159.134.234"),
+                ("*.discordapp.net", "162.159.129.233"),
+                ("roblox.com", "128.116.44.3"),
+                ("www.roblox.com", "128.116.44.3"),
+                ("*.roblox.com", "128.116.44.3"),
+            ];
+            for (dom, ip) in defaults {
+                predefined_map
+                    .entry(dom.to_string())
+                    .or_insert_with(|| vec![ip.to_string()]);
             }
 
             if !predefined_map.is_empty() {
@@ -88,14 +109,22 @@ impl<'a> SingBoxGenerator<'a> {
                 }));
 
                 rules.push(json!({
-                    "domain": domain_list,
+                    "domain_suffix": [
+                        "discord.com",
+                        "discordapp.com",
+                        "discord.gg",
+                        "discordapp.net",
+                        "discordcdn.com",
+                        "discord.media",
+                        "roblox.com"
+                    ],
                     "server": "dns-hosts"
                 }));
             }
         }
 
-        // Remote DNS
-        servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, None));
+        // Remote DNS (routes through proxy outbound so ByeDPI unblocks it)
+        servers.push(Self::parse_dns_server("dns-remote", &self.settings.remote_dns, Some("proxy")));
 
         // Direct DNS
         servers.push(Self::parse_dns_server("dns-direct", &self.settings.direct_dns, None));
@@ -179,17 +208,22 @@ impl<'a> SingBoxGenerator<'a> {
 
         // TUN inbound if enabled
         if self.settings.enable_tun {
-            inbounds.push(json!({
+            let mut tun_obj = json!({
                 "type": "tun",
                 "tag": "tun-in",
                 "interface_name": self.settings.tun_interface_name,
-                "address": ["172.19.0.1/30"],
+                "address": ["172.19.0.1/24"],
                 "auto_route": true,
-                "strict_route": self.settings.tun_strict_route,
+                "strict_route": false,
                 "stack": self.settings.tun_stack,
-                "dns_mode": "disabled",
+                "dns_mode": "hijack",
                 "route_exclude_address": ["127.0.0.0/8"]
-            }));
+            });
+            #[cfg(target_os = "linux")]
+            {
+                tun_obj["auto_redirect"] = json!(true);
+            }
+            inbounds.push(tun_obj);
         }
 
         Ok(Value::Array(inbounds))
@@ -422,30 +456,47 @@ impl<'a> SingBoxGenerator<'a> {
     fn build_route(&self) -> Result<Value> {
         let mut rules = Vec::new();
 
-        // 1. Sniff inbound connections
+        // 1. ciadpi / ByeDPI process bypass to direct physical interface
+        // to prevent routing loop when TUN is active
+        rules.push(json!({
+            "process_name": ["ciadpi"],
+            "outbound": "direct"
+        }));
+        if !self.settings.byedpi_path.is_empty() {
+            rules.push(json!({
+                "process_path": [self.settings.byedpi_path],
+                "outbound": "direct"
+            }));
+        }
+
+        // 2. Sniff inbound connections
         rules.push(json!({
             "action": "sniff"
         }));
 
-        // 2. Inbound protocol DNS traffic hijack to internal DNS
+        // 3. Inbound DNS traffic hijack to internal DNS (both port 53 and protocol dns)
+        rules.push(json!({
+            "port": 53,
+            "action": "hijack-dns"
+        }));
         rules.push(json!({
             "protocol": "dns",
             "action": "hijack-dns"
         }));
 
-        // 3. Resolve domains to IPv4 before sending to outbound proxy
+        // 4. Resolve domains to IPv4 before sending to outbound proxy
         rules.push(json!({
             "action": "resolve",
             "strategy": "ipv4_only"
         }));
 
-        // 4. Private IP ranges bypass
+        // 5. Private IP ranges bypass
         rules.push(json!({
             "ip_is_private": true,
             "outbound": "direct"
         }));
 
-        // 3. Custom rules from RouteProfile
+        // 6. Custom rules from RouteProfile
         for r in self.route_rules {
             let mut rule_obj = json!({
                 "outbound": r.target
@@ -487,7 +538,8 @@ impl<'a> SingBoxGenerator<'a> {
             "rules": rules,
             "final": final_outbound,
             "auto_detect_interface": true,
-            "default_domain_resolver": "dns-direct"
+            "default_domain_resolver": "dns-direct",
+            "find_process": true
         }))
     }
 }
